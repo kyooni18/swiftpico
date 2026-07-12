@@ -13,7 +13,19 @@ struct SwiftPicoCommand {
         message(FATAL_ERROR "PICOKIT_ROOT must point to the resolved PicoKit package checkout")
     endif()
 
+    set(PICO_SDK_PATH "${PICOKIT_ROOT}/Vendor/pico-sdk" CACHE PATH "Pico SDK path")
+    include("${PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+    project(PicoKitFirmware LANGUAGES C CXX ASM)
+    set(PICOKIT_PROJECT_INITIALIZED YES)
     include("${PICOKIT_ROOT}/Firmware/CMakeLists.txt")
+
+    # Keep the application reachable by picotool and by the USB CDC 1200-baud
+    # BOOTSEL reset fallback used by `swiftpico flash`.
+    if(NOT DEFINED PICOKIT_PRODUCT)
+        set(PICOKIT_PRODUCT "PicoKitFirmware")
+    endif()
+    pico_enable_stdio_usb(${PICOKIT_PRODUCT} 1)
+    pico_enable_stdio_uart(${PICOKIT_PRODUCT} 0)
     """
 
     private static let projectRunner = """
@@ -261,16 +273,7 @@ struct SwiftPicoCommand {
                 print("Flashed \(source.lastPathComponent) over USB.")
                 return
             } catch {
-                print("picotool could not enter BOOTSEL; requesting USB serial reset…")
-                try resetToBootloaderOverUSB()
-                guard let bootVolume = waitForBootVolume() else {
-                    throw CLIError.message("Pico did not mount a BOOTSEL volume after the USB serial reset")
-                }
-                try copyUF2ToVolume(source, volume: bootVolume)
-                ejectBootVolume(bootVolume)
-                print("Flashed \(source.lastPathComponent) to \(bootVolume.path) over USB.")
-                print("Ejected the BOOTSEL volume; Pico is restarting.")
-                return
+                print("picotool could not enter BOOTSEL; falling back to USB serial reset…")
             }
         }
 
@@ -282,7 +285,23 @@ struct SwiftPicoCommand {
             return
         }
 
-        throw CLIError.message("picotool was not found. Install it with 'brew install picotool' for USB flashing, or pass --volume /Volumes/RPI-RP2 to use an already-mounted BOOTSEL volume.")
+        // USB stdio exposes the Pico SDK reset interface even when picotool is
+        // not installed. Open the sole CDC device at 1200 baud, wait for the
+        // BOOTSEL drive, then use the same UF2 copy path as --volume.
+        if serialDevices().count == 1 {
+            print("Requesting BOOTSEL over USB serial…")
+            try resetToBootloaderOverUSB()
+            guard let bootVolume = waitForBootVolume() else {
+                throw CLIError.message("Pico did not mount a BOOTSEL volume after the USB serial reset")
+            }
+            try copyUF2ToVolume(source, volume: bootVolume)
+            ejectBootVolume(bootVolume)
+            print("Flashed \(source.lastPathComponent) to \(bootVolume.path) over USB.")
+            print("Ejected the BOOTSEL volume; Pico is restarting.")
+            return
+        }
+
+        throw CLIError.message("picotool was not found and no single USB serial device is available for the automatic BOOTSEL reset. Install it with 'brew install picotool', connect the Pico, or pass --volume /Volumes/RPI-RP2 to use an already-mounted BOOTSEL volume.")
     }
 
     // MARK: - debug
@@ -948,8 +967,8 @@ struct SwiftPicoCommand {
               Build the firmware
       clean, c Remove build artifacts
       flash, f [--uf2 PATH] [--volume PATH]
-              Flash over USB with picotool; --volume uses mounted BOOTSEL
-              storage explicitly
+              Flash over USB with picotool or USB CDC reset; --volume uses
+              mounted BOOTSEL storage explicitly
       upload  Alias for flash
       make, m Build then flash
       debug   [--openocd PATH] [--target TARGET]

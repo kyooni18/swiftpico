@@ -20,6 +20,8 @@ done
 
 grep -q 'github.com/kyooni18/PicoKit.git' "$tmp/serial/Package.swift"
 grep -q 'PICOKIT_ROOT}/Firmware/CMakeLists.txt' "$tmp/serial/Firmware/CMakeLists.txt"
+grep -Fq 'pico_enable_stdio_usb(${PICOKIT_PRODUCT} 1)' "$tmp/serial/Firmware/CMakeLists.txt"
+grep -Fq 'pico_enable_stdio_uart(${PICOKIT_PRODUCT} 0)' "$tmp/serial/Firmware/CMakeLists.txt"
 grep -q 'Serial.println' "$tmp/serial/Sources/serial/main.swift"
 grep -q 'sleep(' "$tmp/serial/Sources/serial/main.swift"
 grep -q 'Serial.println' "$tmp/blink/Sources/blink/main.swift"

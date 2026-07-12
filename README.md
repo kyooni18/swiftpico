@@ -23,6 +23,13 @@ swiftpico monitor --reconnect
 
 `init` creates a standalone Swift package with a tagged PicoKit dependency, a board-specific `swiftpico.json`, a firmware CMake entrypoint, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` when you need a different PicoKit release, or `--skip-resolve` for an offline scaffold.
 
+Generated firmware enables the Pico SDK USB stdio reset interface and disables UART stdio:
+
+```cmake
+pico_enable_stdio_usb(your_target 1)
+pico_enable_stdio_uart(your_target 0)
+```
+
 ## Flashing
 
 The normal flash path uses the USB interface directly:
@@ -31,7 +38,7 @@ The normal flash path uses the USB interface directly:
 swiftpico flash
 ```
 
-SwiftPico runs `picotool load -f`, which asks compatible USB-stdio firmware to reboot into the bootloader, loads the UF2, and returns to the application. If you already mounted a BOOTSEL volume, the explicit compatibility path remains available:
+SwiftPico runs `picotool load -f` when available, which asks compatible USB-stdio firmware to reboot into the bootloader, loads the UF2, and returns to the application. If `picotool` is unavailable or cannot reset the board, SwiftPico uses the USB CDC 1200-baud reset exposed by the same USB stdio setting, waits for BOOTSEL storage, and copies the UF2. If you already mounted a BOOTSEL volume, the explicit compatibility path remains available:
 
 ```sh
 swiftpico flash --volume /Volumes/RPI-RP2
