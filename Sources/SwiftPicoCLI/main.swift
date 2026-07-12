@@ -169,7 +169,7 @@ struct SwiftPicoCommand {
         """.write(to: projectRoot.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
 
         if !skipResolve {
-            _ = try installPicoKitDependency(projectRoot: projectRoot)
+            _ = try installPicoKitDependency(projectRoot: projectRoot, refresh: true)
         }
 
         print("""
@@ -735,9 +735,12 @@ struct SwiftPicoCommand {
         return try installPicoKitDependency(projectRoot: project.root)
     }
 
-    private static func installPicoKitDependency(projectRoot: URL) throws -> URL {
+    private static func installPicoKitDependency(projectRoot: URL, refresh: Bool = false) throws -> URL {
         let checkout = projectRoot.appendingPathComponent(".build/checkouts/PicoKit", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: checkout.appendingPathComponent("Package.swift").path) {
+        if refresh {
+            print("Fetching latest PicoKit dependency…")
+            try runProcess(["swift", "package", "update", "PicoKit"], currentDirectory: projectRoot)
+        } else if !FileManager.default.fileExists(atPath: checkout.appendingPathComponent("Package.swift").path) {
             print("Resolving PicoKit dependency…")
             try runProcess(["swift", "package", "resolve"], currentDirectory: projectRoot)
         }
