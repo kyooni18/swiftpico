@@ -37,6 +37,10 @@ SwiftPico runs `picotool load -f`, which asks compatible USB-stdio firmware to r
 swiftpico flash --volume /Volumes/RPI-RP2
 ```
 
+If the firmware does not expose picotool's vendor reset interface, SwiftPico
+falls back to the Pico SDK's USB CDC 1200-baud reset and copies the UF2 to the
+BOOTSEL volume after it mounts. This still requires no BOOTSEL button press.
+
 ## Development
 
 ```sh

@@ -247,23 +247,38 @@ struct SwiftPicoCommand {
 
         if let requestedVolume = option("--volume", in: arguments).map({ project.url(for: $0) }) {
             try copyUF2ToVolume(source, volume: requestedVolume)
+            ejectBootVolume(requestedVolume)
             print("Flashed \(source.lastPathComponent) to \(requestedVolume.path)")
-            print("Pico will auto-restart after the file transfer completes.")
+            print("Ejected the BOOTSEL volume; Pico is restarting.")
             return
         }
 
         let requestedPicotool = option("--picotool", in: arguments).map { project.url(for: $0).path }
         if let picotool = requestedPicotool ?? findPicotool(config, projectRoot: project.root) {
             print("Flashing \(source.lastPathComponent) over USB with picotool…")
-            try runProcess([picotool, "load", "-f", source.path])
-            print("Flashed \(source.lastPathComponent) over USB.")
-            return
+            do {
+                try runProcess([picotool, "load", "-f", source.path])
+                print("Flashed \(source.lastPathComponent) over USB.")
+                return
+            } catch {
+                print("picotool could not enter BOOTSEL; requesting USB serial reset…")
+                try resetToBootloaderOverUSB()
+                guard let bootVolume = waitForBootVolume() else {
+                    throw CLIError.message("Pico did not mount a BOOTSEL volume after the USB serial reset")
+                }
+                try copyUF2ToVolume(source, volume: bootVolume)
+                ejectBootVolume(bootVolume)
+                print("Flashed \(source.lastPathComponent) to \(bootVolume.path) over USB.")
+                print("Ejected the BOOTSEL volume; Pico is restarting.")
+                return
+            }
         }
 
         if let mountedVolume = findBootVolume() {
             try copyUF2ToVolume(source, volume: mountedVolume)
+            ejectBootVolume(mountedVolume)
             print("Flashed \(source.lastPathComponent) to \(mountedVolume.path)")
-            print("Pico will auto-restart after the file transfer completes.")
+            print("Ejected the BOOTSEL volume; Pico is restarting.")
             return
         }
 
@@ -790,6 +805,42 @@ struct SwiftPicoCommand {
             $0.hasPrefix("cu.usb") || $0.hasPrefix("ttyACM") || $0.hasPrefix("ttyUSB")
         } ?? []
         return devices.sorted().map { "/dev/\($0)" }
+    }
+
+    private static func resetToBootloaderOverUSB() throws {
+        let devices = serialDevices()
+        guard devices.count == 1, let device = devices.first else {
+            let hint = devices.isEmpty
+                ? "no USB serial device found"
+                : "multiple USB serial devices found (passive reset needs exactly one)"
+            throw CLIError.message("cannot request BOOTSEL reset: \(hint)")
+        }
+
+        // The Pico SDK treats 1200 baud as a USB CDC request to reboot into
+        // BOOTSEL. `stty` opens the device, sends the line-coding request, and
+        // closes it, so this works without a serial monitor or extra driver.
+        #if os(macOS)
+        try runProcess(["stty", "-f", device, "1200", "raw", "-echo"], quiet: true)
+        #else
+        try runProcess(["stty", "-F", device, "1200", "raw", "-echo"], quiet: true)
+        #endif
+    }
+
+    private static func waitForBootVolume(timeout: TimeInterval = 8) -> URL? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let volume = findBootVolume() { return volume }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        return nil
+    }
+
+    private static func ejectBootVolume(_ volume: URL) {
+        #if os(macOS)
+        try? runProcess(["diskutil", "eject", volume.path], quiet: true)
+        #else
+        try? runProcess(["umount", volume.path], quiet: true)
+        #endif
     }
 
     private static func isToolAvailable(_ executable: String) -> Bool {
