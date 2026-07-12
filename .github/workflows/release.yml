@@ -1,0 +1,24 @@
+name: Release SwiftPico
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - name: Build
+        run: swift build -c release --product swiftpico
+      - name: Smoke test
+        run: .build/release/swiftpico help
+      - name: Package source archive
+        run: tar -czf swiftpico-${GITHUB_REF_NAME}.tar.gz --exclude=.build --exclude=.git .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: swiftpico-${{ github.ref_name }}.tar.gz
