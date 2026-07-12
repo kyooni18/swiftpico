@@ -169,7 +169,7 @@ struct SwiftPicoCommand {
         """.write(to: projectRoot.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
 
         if !skipResolve {
-            _ = try installPicoKitDependency(projectRoot: projectRoot, refresh: true)
+            _ = try installPicoKitDependency(projectRoot: projectRoot, config: config, refresh: true)
         }
 
         print("""
@@ -732,18 +732,62 @@ struct SwiftPicoCommand {
             return root
         }
 
-        return try installPicoKitDependency(projectRoot: project.root)
+        return try installPicoKitDependency(projectRoot: project.root, config: config)
     }
 
-    private static func installPicoKitDependency(projectRoot: URL, refresh: Bool = false) throws -> URL {
+    private static func clearPicoKitRepoCache(projectRoot: URL) throws {
+        let reposDir = projectRoot.appendingPathComponent(".build/repositories", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: reposDir.path) else { return }
+        let entries = try FileManager.default.contentsOfDirectory(atPath: reposDir.path)
+        for entry in entries where entry.hasPrefix("PicoKit-") {
+            try FileManager.default.removeItem(at: reposDir.appendingPathComponent(entry))
+        }
+    }
+
+    private static func updatePicoKitVersion(projectRoot: URL, config: PicoKitConfig) throws {
+        guard let picoKitURL = config.picoKitURL else { return }
+        let latestVersion = try latestPicoKitVersion(from: picoKitURL)
+        guard latestVersion != config.picoKitVersion else { return }
+
+        print("PicoKit updated: \(config.picoKitVersion ?? "nil") → \(latestVersion)")
+
+        let configURL = projectRoot.appendingPathComponent("swiftpico.json")
+        var updatedConfig = config
+        updatedConfig.picoKitVersion = latestVersion
+        try JSONEncoder.pretty.encode(updatedConfig).write(to: configURL)
+
+        let packageURL = projectRoot.appendingPathComponent("Package.swift")
+        var content = try String(contentsOf: packageURL, encoding: .utf8)
+        if let oldVersion = config.picoKitVersion {
+            let pattern = ".package(url: \"\(picoKitURL)\", from: \"\(oldVersion)\")"
+            let replacement = ".package(url: \"\(picoKitURL)\", from: \"\(latestVersion)\")"
+            if content.contains(pattern) {
+                content = content.replacingOccurrences(of: pattern, with: replacement)
+                try content.write(to: packageURL, atomically: true, encoding: .utf8)
+            }
+        }
+    }
+
+    private static func installPicoKitDependency(projectRoot: URL, config: PicoKitConfig, refresh: Bool = false) throws -> URL {
         let checkout = projectRoot.appendingPathComponent(".build/checkouts/PicoKit", isDirectory: true)
-        if refresh {
-            print("Fetching latest PicoKit dependency…")
-            try runProcess(["swift", "package", "update", "PicoKit"], currentDirectory: projectRoot)
-        } else if !FileManager.default.fileExists(atPath: checkout.appendingPathComponent("Package.swift").path) {
+
+        try updatePicoKitVersion(projectRoot: projectRoot, config: config)
+
+        if !FileManager.default.fileExists(atPath: checkout.appendingPathComponent("Package.swift").path) {
+            try clearPicoKitRepoCache(projectRoot: projectRoot)
             print("Resolving PicoKit dependency…")
+        } else if refresh {
+            try clearPicoKitRepoCache(projectRoot: projectRoot)
+            print("Updating PicoKit dependency…")
+        }
+
+        do {
+            try runProcess(["swift", "package", "resolve"], currentDirectory: projectRoot)
+        } catch {
+            try clearPicoKitRepoCache(projectRoot: projectRoot)
             try runProcess(["swift", "package", "resolve"], currentDirectory: projectRoot)
         }
+
         guard FileManager.default.fileExists(atPath: checkout.appendingPathComponent("Package.swift").path) else {
             throw CLIError.message("PicoKit dependency was not resolved at \(checkout.path)")
         }
