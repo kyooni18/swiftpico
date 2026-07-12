@@ -1,10 +1,24 @@
 import Foundation
 import PicoKit
 
+private struct ReleaseVersion: Comparable, CustomStringConvertible {
+    let major: Int
+    let minor: Int
+    let patch: Int
+
+    static func < (lhs: ReleaseVersion, rhs: ReleaseVersion) -> Bool {
+        (lhs.major, lhs.minor, lhs.patch) < (rhs.major, rhs.minor, rhs.patch)
+    }
+
+    var description: String {
+        "\(major).\(minor).\(patch)"
+    }
+}
+
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let defaultPicoKitVersion = "0.1.0"
+    private static let offlinePicoKitVersion = "0.1.0"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -79,8 +93,15 @@ struct SwiftPicoCommand {
         let force = arguments.contains("--force")
         let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let picoKitURL = option("--pico-kit-url", in: arguments) ?? Self.defaultPicoKitURL
-        let picoKitVersion = option("--pico-kit-version", in: arguments) ?? Self.defaultPicoKitVersion
         let skipResolve = arguments.contains("--skip-resolve")
+        let picoKitVersion: String
+        if let requestedVersion = option("--pico-kit-version", in: arguments) {
+            picoKitVersion = requestedVersion
+        } else if skipResolve {
+            picoKitVersion = Self.offlinePicoKitVersion
+        } else {
+            picoKitVersion = try latestPicoKitVersion(from: picoKitURL)
+        }
         let projectRoot: URL
         if let path = option("--path", in: arguments) {
             projectRoot = URL(fileURLWithPath: path, relativeTo: currentDirectory).standardizedFileURL
@@ -733,6 +754,43 @@ struct SwiftPicoCommand {
             throw CLIError.message("Pico SDK was not initialized inside \(checkout.path)/Vendor/pico-sdk")
         }
         return checkout
+    }
+
+    private static func latestPicoKitVersion(from repositoryURL: String) throws -> String {
+        let output = try captureProcessOutput(["git", "ls-remote", "--tags", "--refs", repositoryURL])
+        let versions = output.split(whereSeparator: \.isNewline).compactMap { line -> ReleaseVersion? in
+            guard let tag = line.split(separator: "\t").last else { return nil }
+            let ref = tag.hasPrefix("refs/tags/") ? tag.dropFirst("refs/tags/".count) : tag[...]
+            let name = ref.hasPrefix("v") ? ref.dropFirst() : ref[...]
+            let components = name.split(separator: ".")
+            guard components.count == 3,
+                  let major = Int(components[0]),
+                  let minor = Int(components[1]),
+                  let patch = Int(components[2]) else { return nil }
+            return ReleaseVersion(major: major, minor: minor, patch: patch)
+        }
+
+        guard let latest = versions.max() else {
+            throw CLIError.message("PicoKit repository has no stable semantic-version tags: \(repositoryURL)")
+        }
+        return latest.description
+    }
+
+    private static func captureProcessOutput(_ command: [String]) throws -> String {
+        precondition(!command.isEmpty)
+        let process = Process()
+        let output = Pipe()
+        let errors = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = command
+        process.standardOutput = output
+        process.standardError = errors
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw CLIError.message("command failed (exit \(process.terminationStatus)): \(command.joined(separator: " "))")
+        }
+        return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     }
 
     private static func validateArguments(command: String, arguments: [String]) throws {

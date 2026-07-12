@@ -21,7 +21,7 @@ swiftpico flash
 swiftpico monitor --reconnect
 ```
 
-`init` creates a standalone Swift package with a tagged PicoKit dependency, a board-specific `swiftpico.json`, a firmware CMake entrypoint, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` when you need a different PicoKit release, or `--skip-resolve` for an offline scaffold.
+`init` creates a standalone Swift package with the latest stable PicoKit tag, a board-specific `swiftpico.json`, a firmware CMake entrypoint, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` when you need a different PicoKit release, or `--skip-resolve` for an offline scaffold.
 
 Generated firmware enables the Pico SDK USB stdio reset interface and disables UART stdio:
 
