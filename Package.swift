@@ -7,13 +7,11 @@ let package = Package(
     products: [
         .executable(name: "swiftpico", targets: ["SwiftPicoCLI"])
     ],
-    dependencies: [
-        .package(url: "https://github.com/kyooni18/PicoKit.git", from: "0.1.4")
-    ],
+    dependencies: [],
     targets: [
         .executableTarget(
             name: "SwiftPicoCLI",
-            dependencies: [.product(name: "PicoKit", package: "PicoKit")],
+            dependencies: [],
             path: "Sources/SwiftPicoCLI"
         )
     ]

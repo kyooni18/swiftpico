@@ -2,6 +2,10 @@
 
 SwiftPico is the command-line companion to [PicoKit](https://github.com/kyooni18/PicoKit). It creates Pico firmware projects, builds them with Embedded Swift, flashes them over USB, and provides an interactive serial terminal.
 
+The CLI itself has no PicoKit package dependency; it only writes the selected
+PicoKit release into generated projects. This keeps installation and release
+builds small while firmware still uses the complete library and SDK checkout.
+
 ## Install with Homebrew
 
 ```sh

@@ -1,5 +1,3 @@
-import PicoKit
-
 extension SwiftPicoCommand {
     static let availableTemplates: Set<String> = [
         "blink", "serial", "adc", "pwm", "i2c", "spi", "interrupt", "watchdog",

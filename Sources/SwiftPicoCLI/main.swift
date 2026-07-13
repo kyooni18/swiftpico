@@ -5,7 +5,6 @@ import Darwin
 #else
 import Glibc
 #endif
-import PicoKit
 
 private struct ReleaseVersion: Comparable, CustomStringConvertible {
     let major: Int
