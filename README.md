@@ -21,7 +21,7 @@ swiftpico flash
 swiftpico monitor --reconnect
 ```
 
-`init` creates a standalone Swift package with the latest stable PicoKit tag, a board-specific `swiftpico.json`, a firmware CMake entrypoint, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` when you need a different PicoKit release, or `--skip-resolve` for an offline scaffold.
+`init` creates a standalone Swift package with the latest stable PicoKit tag, a board-specific `swiftpico.json`, a firmware CMake entrypoint, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` when you need a different PicoKit release, or `--skip-resolve` for an offline scaffold. Use `--pico-kit-path /path/to/PicoKit` to develop against a local checkout before a PicoKit change is released as a tag.
 
 Generated firmware enables the Pico SDK USB stdio reset interface and disables UART stdio:
 
@@ -47,6 +47,40 @@ swiftpico flash --volume /Volumes/RPI-RP2
 If the firmware does not expose picotool's vendor reset interface, SwiftPico
 falls back to the Pico SDK's USB CDC 1200-baud reset and copies the UF2 to the
 BOOTSEL volume after it mounts. This still requires no BOOTSEL button press.
+
+## External libraries
+
+Current PicoKit firmware builds automatically load `Firmware/Dependencies.cmake`.
+SwiftPico's `add` command writes that file and, for Swift packages, updates the
+generated `Package.swift` too.
+
+Add a Foundation-free Embedded Swift package target:
+
+```sh
+swiftpico add swift \
+  --url https://github.com/example/EmbeddedMath.git \
+  --from 1.0.0 --package EmbeddedMath --product EmbeddedMath
+```
+
+Then import it normally in `Sources/<App>/main.swift`:
+
+```swift
+import PicoKit
+import EmbeddedMath
+```
+
+Add a C or C++ library that exports a Pico-compatible CMake target:
+
+```sh
+swiftpico add c \
+  --url https://github.com/example/tiny-driver.git \
+  --tag v1.2.0 --target tiny_driver
+```
+
+The generated `Firmware/Dependencies.cmake` remains ordinary CMake, so it is
+easy to adjust a source directory, add include paths, or link other CMake
+targets. A library must support the Pico cross compiler; for Swift, it must
+also be Foundation-free and compatible with Embedded Swift.
 
 ## Development
 
