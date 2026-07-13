@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-latest
@@ -19,7 +23,7 @@ jobs:
         run: |
           set -o pipefail
           swift --version
-          if ! swift build -c release --product swiftpico 2>&1 | tee build.log; then
+          if ! swift build --product swiftpico 2>&1 | tee build.log; then
             while IFS= read -r line; do
               line=${line//'%'/'%25'}
               line=${line//$'\r'/'%0D'}
@@ -35,7 +39,7 @@ jobs:
             exit 1
           fi
       - name: Smoke test
-        run: .build/release/swiftpico help
+        run: .build/debug/swiftpico help
       - name: Package source archive
         run: tar -czf swiftpico-${GITHUB_REF_NAME}.tar.gz --exclude=.build --exclude=.git .
       - uses: softprops/action-gh-release@v2
