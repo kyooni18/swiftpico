@@ -5,14 +5,27 @@ set -eu
 # Run this in CI or on a firmware build host; it intentionally builds the
 # generated project for every supported Raspberry Pi board definition.
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+kit=${PICOKIT_TEST_ROOT:-"$root/../PicoKit"}
+kit=$(CDPATH= cd -- "$kit" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+swift build --package-path "$root" --product swiftpico
+cli="$root/.build/debug/swiftpico"
 
 for board in pico pico_w pico2 pico2_w; do
     project="$tmp/$board"
-    PICOKIT_ROOT="$root" swift run --package-path "$root" swiftpico init --board "$board" --name MatrixApp --template blink --path "$project"
+    "$cli" init --board "$board" --name MatrixApp --template blink --path "$project" --pico-kit-path "$kit"
     (
         cd "$project"
-        PICOKIT_ROOT="$root" swift run --package-path "$root" swiftpico build --configuration release --context "$project/swiftpico.json"
+        "$cli" build --configuration release --context "$project/swiftpico.json"
     )
 done
+
+# Compile the duplex USB path on both supported MCU families.
+for board in pico pico2_w; do
+    project="$tmp/serial-$board"
+    "$cli" init --board "$board" --name SerialMatrix --template serial --path "$project" --pico-kit-path "$kit"
+    "$cli" build --configuration release --context "$project/swiftpico.json"
+done
+
+echo "SwiftPico firmware matrix passed"

@@ -1,6 +1,6 @@
 # SwiftPico
 
-SwiftPico is the command-line companion to [PicoKit](https://github.com/kyooni18/PicoKit). It creates Pico firmware projects, builds them with Embedded Swift, flashes them over USB, and monitors serial output.
+SwiftPico is the command-line companion to [PicoKit](https://github.com/kyooni18/PicoKit). It creates Pico firmware projects, builds them with Embedded Swift, flashes them over USB, and provides an interactive serial terminal.
 
 ## Install with Homebrew
 
@@ -20,6 +20,14 @@ swiftpico build
 swiftpico flash
 swiftpico monitor --reconnect
 ```
+
+`monitor` forwards typed bytes to the board while displaying its USB CDC output.
+It keeps Ctrl-C for leaving the terminal and restores the local terminal mode on
+exit.
+
+The `serial` template is an exact byte echo using `Serial.read()` and raw-byte
+`Serial.write(_:)`, making it useful for both interactive bring-up and the
+automated USB hardware gate.
 
 `init` creates a standalone Swift package with the latest stable PicoKit tag, a board-specific `swiftpico.json`, a firmware CMake entrypoint, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` when you need a different PicoKit release, or `--skip-resolve` for an offline scaffold. Use `--pico-kit-path /path/to/PicoKit` to develop against a local checkout before a PicoKit change is released as a tag.
 
@@ -88,4 +96,9 @@ also be Foundation-free and compatible with Embedded Swift.
 swift build
 swift run swiftpico help
 sh Tests/cli-integration.sh
+PICOKIT_TEST_ROOT=../PicoKit sh Tests/firmware-matrix.sh
 ```
+
+The CLI integration suite generates every template and checks local PicoKit and
+fake-picotool paths. The firmware matrix compiles all boards plus serial echo on
+both RP2040 and RP2350 against the explicit local PicoKit checkout.

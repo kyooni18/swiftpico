@@ -1,4 +1,10 @@
 import Foundation
+import Dispatch
+#if os(macOS)
+import Darwin
+#else
+import Glibc
+#endif
 import PicoKit
 
 private struct ReleaseVersion: Comparable, CustomStringConvertible {
@@ -18,7 +24,7 @@ private struct ReleaseVersion: Comparable, CustomStringConvertible {
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.1.2"
+    private static let offlinePicoKitVersion = "0.1.4"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -454,13 +460,48 @@ struct SwiftPicoCommand {
         #else
         try runProcess(["stty", "-F", device, baud, "raw", "-echo"])
         #endif
-        print("Monitoring \(device) at \(baud) baud. Press Ctrl-C to stop.")
+
+        let restoreTerminal: (() -> Void)?
+        if isatty(STDIN_FILENO) != 0 {
+            let savedTerminal = try captureProcessOutput(["stty", "-g"])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Character-at-a-time input while retaining signal processing, so
+            // Ctrl-C still exits the monitor instead of being sent to firmware.
+            try runProcess(["stty", "-icanon", "min", "1", "time", "0", "-echo"])
+            restoreTerminal = { try? runProcess(["stty", savedTerminal]) }
+        } else {
+            restoreTerminal = nil
+        }
+        defer { restoreTerminal?() }
+
+        signal(SIGINT, SIG_IGN)
+        let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+        interrupt.setEventHandler {
+            restoreTerminal?()
+            Foundation.exit(0)
+        }
+        interrupt.resume()
+
+        let writer = SerialWriter()
+        let inputThread = Thread {
+            while true {
+                let data = FileHandle.standardInput.availableData
+                guard !data.isEmpty else { return }
+                writer.write(data)
+            }
+        }
+        inputThread.qualityOfService = .userInteractive
+        inputThread.start()
+
+        print("Monitoring \(device) at \(baud) baud. Type to send; press Ctrl-C to stop.")
         reconnect: while true {
             let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: device))
+            try writer.open(device)
             while true {
                 let data = handle.availableData
                 guard !data.isEmpty else {
                     try? handle.close()
+                    writer.close()
                     guard arguments.contains("--reconnect") else { return }
                     print("Serial device disconnected; waiting to reconnect…")
                     while !FileManager.default.fileExists(atPath: device) {
@@ -554,215 +595,7 @@ struct SwiftPicoCommand {
         }
     }
 
-    // MARK: - templates
-
-    private static func showTemplates(_ arguments: [String]) {
-        print("Available templates:")
-        print("  blink         — Toggle onboard LED")
-        print("  serial        — USB CDC serial output")
-        print("  adc           — Read ADC GPIO26")
-        print("  pwm           — Set a PWM duty cycle")
-        print("  i2c           — I2C timeout-safe write example")
-        print("  spi           — Configure SPI bus")
-        print("  interrupt     — Poll SDK-recorded GPIO edge events")
-        print("  watchdog      — Enable and service watchdog")
-    }
-
-    // MARK: - Template Sources
-
-    private static func templateSource(template: String, board: String, name: String) -> String {
-        switch template {
-        case "blink":
-            return embeddedBlinkTemplate(board: board)
-        case "serial":
-            return embeddedSerialTemplate(name: name)
-        case "adc":
-            return adcTemplate()
-        case "pwm":
-            return pwmTemplate()
-        case "i2c":
-            return i2cTemplate()
-        case "spi":
-            return spiTemplate()
-        case "interrupt": return interruptTemplate()
-        case "watchdog": return watchdogTemplate()
-        default:
-            return embeddedBlinkTemplate(board: board)
-        }
-    }
-
-    private static func embeddedBlinkTemplate(board: String) -> String {
-        if board == "pico_w" || board == "pico2_w" {
-            let boardCase = board == "pico_w" ? "picoW" : "pico2W"
-            return """
-            import PicoKit
-
-            @main
-            struct Blink {
-                static func main() {
-                    let led = try! BoardLED(board: .\(boardCase))
-                    Serial.println("Blink started")
-                    while true {
-                        try! led.set(.high)
-                        sleep(500)
-                        try! led.set(.low)
-                        sleep(500)
-                    }
-                }
-            }
-            """
-        }
-
-        return """
-        import PicoKit
-
-        @main
-        struct Blink {
-            static func main() {
-                pinMode(25, .output)
-                Serial.println("Blink started")
-                while true {
-                    digitalWrite(25, .high)
-                    sleep(500)
-                    digitalWrite(25, .low)
-                    sleep(500)
-                }
-            }
-        }
-        """
-    }
-
-    private static func embeddedSerialTemplate(name: String) -> String {
-        return """
-        import PicoKit
-
-        @main
-        struct SerialDemo {
-            static func main() {
-                var counter = 0
-                while true {
-                    Serial.println("\(name) #\\(counter)")
-                    counter += 1
-                    sleep(1_000)
-                }
-            }
-        }
-        """
-    }
-
-    private static func adcTemplate() -> String {
-        return """
-        import PicoKit
-
-        @main
-        struct ADCExample {
-            static func main() {
-                let adc = try! PicoADC()
-
-                while true {
-                    let raw = try! adc.read(.gpio26)
-                    Serial.println("ADC26: \\(raw)")
-                    sleep(1_000)
-                }
-            }
-        }
-        """
-    }
-
-    private static func pwmTemplate() -> String {
-        return """
-        import PicoKit
-
-        @main
-        struct PWMExample {
-            static func main() {
-                let pin = try! PicoPin(0)
-                let pwm = try! PicoPWM(pin: pin, frequency: .kilohertz(1))
-
-                while true {
-                    try! analogWrite(0, 128, using: pwm)
-                    sleep(10)
-                }
-            }
-        }
-        """
-    }
-
-    private static func i2cTemplate() -> String {
-        return """
-        import PicoKit
-
-        @main
-        struct I2CExample {
-            static func main() {
-                let i2c = try! PicoI2C(.i2c0, frequency: .kilohertz(400), sda: try! PicoPin(4), scl: try! PicoPin(5))
-                let timeout = try! Duration.milliseconds(20)
-
-                while true {
-                    _ = try? i2c.write(address: 0x50, bytes: [0], timeout: timeout)
-                    sleep(1_000)
-                }
-            }
-        }
-        """
-    }
-
-    private static func spiTemplate() -> String {
-        return """
-        import PicoKit
-
-        @main
-        struct SPIExample {
-            static func main() {
-                _ = try! PicoSPI(.spi0, frequency: .megahertz(1), sck: try! PicoPin(18), mosi: try! PicoPin(19), miso: try! PicoPin(16))
-
-                while true { sleep(1_000) }
-            }
-        }
-        """
-    }
-
-    private static func interruptTemplate() -> String {
-        return """
-        import PicoKit
-
-        @main
-        struct InterruptExample {
-            static func main() {
-                let pin = try! PicoPin(17)
-                let interrupts = PicoInterrupts()
-                try! interrupts.enable(pin, edge: .falling)
-
-                while true {
-                    if interrupts.takeEvents(for: pin) != 0 { /* handle in foreground */ }
-                    sleepMicroseconds(100)
-                }
-            }
-        }
-        """
-    }
-
-    private static func watchdogTemplate() -> String {
-        return """
-        import PicoKit
-
-        @main
-        struct WatchdogExample {
-            static func main() {
-                let watchdog = PicoWatchdog()
-                try! watchdog.enable(timeout: .seconds(5))
-                while true {
-                    watchdog.update()
-                    sleep(1_000)
-                }
-            }
-        }
-        """
-    }
-
     // MARK: - Helpers
-
-    private static let availableTemplates: Set<String> = ["blink", "serial", "adc", "pwm", "i2c", "spi", "interrupt", "watchdog"]
 
     private static func canonicalBoard(_ value: String) throws -> PicoBoard {
         guard let board = PicoBoard(configurationName: value) else {
@@ -1238,7 +1071,7 @@ struct SwiftPicoCommand {
       debug   [--openocd PATH] [--target TARGET]
               Start OpenOCD debug session
       monitor, serial, mon [--device /dev/cu.usbmodem…] [--baud 115200]
-          [--reconnect] Monitor serial output; optionally reconnect after reset
+          [--reconnect] Interactive serial terminal; optionally reconnect after reset
       list, devices
               Show Pico boot volumes and serial devices
       info    Show current project configuration

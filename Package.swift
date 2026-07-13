@@ -8,7 +8,7 @@ let package = Package(
         .executable(name: "swiftpico", targets: ["SwiftPicoCLI"])
     ],
     dependencies: [
-        .package(url: "https://github.com/kyooni18/PicoKit.git", from: "0.1.2")
+        .package(url: "https://github.com/kyooni18/PicoKit.git", from: "0.1.4")
     ],
     targets: [
         .executableTarget(
