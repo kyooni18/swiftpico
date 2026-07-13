@@ -7,18 +7,24 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: swift-actions/setup-swift@v2
+      - uses: actions/checkout@v6
+      - uses: swift-actions/setup-swift@v3
         with:
-          swift-version: "6.2"
+          swift-version: "main-snapshot"
       - name: Build
         shell: bash
         run: |
           set -o pipefail
           swift --version
           if ! swift build -c release --product swiftpico 2>&1 | tee build.log; then
+            while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/'%0D'}
+              line=${line//$'\n'/'%0A'}
+              echo "::error title=Swift nightly build::$line"
+            done < <(tail -20 build.log)
             {
               echo "### SwiftPico release build failure"
               echo '```text'
