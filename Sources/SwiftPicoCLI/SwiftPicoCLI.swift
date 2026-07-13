@@ -382,6 +382,7 @@ struct SwiftPicoCommand {
         }
 
         let requestedPicotool = option("--picotool", in: arguments).map { project.url(for: $0).path }
+        var picotoolFailed = false
         if let picotool = requestedPicotool ?? findPicotool(config, projectRoot: project.root) {
             print("Flashing \(source.lastPathComponent) over USB with picotool…")
             do {
@@ -389,6 +390,7 @@ struct SwiftPicoCommand {
                 print("Flashed \(source.lastPathComponent) over USB.")
                 return
             } catch {
+                picotoolFailed = true
                 print("picotool could not enter BOOTSEL; falling back to USB serial reset…")
             }
         }
@@ -417,7 +419,10 @@ struct SwiftPicoCommand {
             return
         }
 
-        throw CLIError.message("picotool was not found and no single USB serial device is available for the automatic BOOTSEL reset. Install it with 'brew install picotool', connect the Pico, or pass --volume /Volumes/RPI-RP2 to use an already-mounted BOOTSEL volume.")
+        let picotoolReason = picotoolFailed
+            ? "picotool could not access an RP-series device"
+            : "picotool was not found"
+        throw CLIError.message("\(picotoolReason), and no single USB serial device is available for the automatic BOOTSEL reset. Connect the Pico with a data cable while holding BOOTSEL, or pass --volume /Volumes/RPI-RP2 to use an already-mounted BOOTSEL volume.")
     }
 
     // MARK: - debug
@@ -897,6 +902,22 @@ struct SwiftPicoCommand {
         var candidates: [String] = []
         if let explicit = ProcessInfo.processInfo.environment["PICO_SWIFTC"], !explicit.isEmpty {
             candidates.append(explicit)
+        }
+        if let toolchains = ProcessInfo.processInfo.environment["SWIFTLY_TOOLCHAINS_DIR"],
+           let installed = try? fileManager.contentsOfDirectory(atPath: toolchains) {
+            candidates.append(contentsOf: installed
+                .filter { $0.hasPrefix("swift-DEVELOPMENT-SNAPSHOT-") && $0.hasSuffix(".xctoolchain") }
+                .sorted(by: >)
+                .map {
+                    URL(fileURLWithPath: toolchains)
+                        .appendingPathComponent($0)
+                        .appendingPathComponent("usr/bin/swiftc").path
+                })
+        }
+        if let path = ProcessInfo.processInfo.environment["PATH"] {
+            candidates.append(contentsOf: path.split(separator: ":").map {
+                URL(fileURLWithPath: String($0)).appendingPathComponent("swiftc").path
+            })
         }
         if let toolchains = ProcessInfo.processInfo.environment["SWIFTLY_TOOLCHAINS_DIR"] {
             candidates.append(URL(fileURLWithPath: toolchains)
