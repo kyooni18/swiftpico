@@ -1,8 +1,8 @@
 class Swiftpico < Formula
   desc "Project and USB flashing tool for Swift Pico firmware"
   homepage "https://github.com/kyooni18/swiftpico"
-  url "https://github.com/kyooni18/swiftpico/archive/refs/tags/v0.2.3.tar.gz"
-  sha256 "5cbd8cee11c56489a2c885e0663b7a482d6a1452141ea04a2a5a452e3a923428"
+  url "https://github.com/kyooni18/swiftpico/archive/refs/tags/v0.2.4.tar.gz"
+  sha256 "6b8b5cd2b7d0efc341f6cba2ed5c81fdea73a7035e20a074887fe7d5ee22bae7"
   depends_on xcode: :build
   depends_on "picotool"
 
