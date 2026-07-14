@@ -6,6 +6,9 @@ The CLI itself has no PicoKit package dependency; it only writes the selected
 PicoKit release into generated projects. This keeps installation and release
 builds small while firmware still uses the complete library and SDK checkout.
 
+SwiftPico supports macOS 13 or newer on both Apple Silicon (`arm64`) and Intel
+(`x86_64`). Homebrew builds the executable natively for the host architecture.
+
 ## Install with Homebrew
 
 ```sh

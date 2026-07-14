@@ -9,8 +9,8 @@ import Glibc
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.2.0"
-    private static let releaseVersion = "0.2.0"
+    private static let offlinePicoKitVersion = "0.2.1"
+    private static let releaseVersion = "0.2.1"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)

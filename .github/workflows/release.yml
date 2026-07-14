@@ -13,11 +13,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: macos-latest
+  validate:
+    name: Validate (${{ matrix.architecture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+          - architecture: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
       - uses: swift-actions/setup-swift@v3
+      - name: Verify architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
       - name: Build
         shell: bash
         run: |
@@ -40,6 +51,12 @@ jobs:
           fi
       - name: Smoke test
         run: .build/debug/swiftpico help
+
+  release:
+    needs: validate
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
       - name: Package source archive
         run: tar -czf swiftpico-${GITHUB_REF_NAME}.tar.gz --exclude=.build --exclude=.git .
       - uses: softprops/action-gh-release@v2

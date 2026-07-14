@@ -56,7 +56,7 @@ struct FirmwareDependencyLock: Codable {
     }
 
     var schemaVersion = 1
-    var generatedBy = "SwiftPico 0.2.0"
+    var generatedBy = "SwiftPico 0.2.1"
     var picoKit: PicoKitResolution
     var dependencies: [Resolution]
 }
