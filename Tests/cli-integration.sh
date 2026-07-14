@@ -25,8 +25,8 @@ done
 
 grep -q 'github.com/kyooni18/PicoKit.git' "$tmp/serial/Package.swift"
 grep -q 'PICOKIT_ROOT}/Firmware/CMakeLists.txt' "$tmp/serial/Firmware/CMakeLists.txt"
-grep -Fq 'pico_enable_stdio_usb(${PICOKIT_PRODUCT} 1)' "$tmp/serial/Firmware/CMakeLists.txt"
-grep -Fq 'pico_enable_stdio_uart(${PICOKIT_PRODUCT} 0)' "$tmp/serial/Firmware/CMakeLists.txt"
+grep -Fq 'initialize_usb_interface_at_start' "$tmp/serial/swiftpico.json"
+! grep -Fq 'pico_enable_stdio_usb(${PICOKIT_PRODUCT} 1)' "$tmp/serial/Firmware/CMakeLists.txt"
 grep -q 'Serial.read()' "$tmp/serial/Sources/serial/main.swift"
 grep -Fq 'Serial.write([byte])' "$tmp/serial/Sources/serial/main.swift"
 grep -q 'sleepMicroseconds(100)' "$tmp/serial/Sources/serial/main.swift"

@@ -9,8 +9,8 @@ import Glibc
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.2.3"
-    private static let releaseVersion = "0.2.3"
+    private static let offlinePicoKitVersion = "0.2.4"
+    private static let releaseVersion = "0.2.4"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -25,13 +25,8 @@ struct SwiftPicoCommand {
     set(PICOKIT_PROJECT_INITIALIZED YES)
     include("${PICOKIT_ROOT}/Firmware/CMakeLists.txt")
 
-    # Keep the application reachable by picotool and by the USB CDC 1200-baud
-    # BOOTSEL reset fallback used by `swiftpico flash`.
-    if(NOT DEFINED PICOKIT_PRODUCT)
-        set(PICOKIT_PRODUCT "PicoKitFirmware")
-    endif()
-    pico_enable_stdio_usb(${PICOKIT_PRODUCT} 1)
-    pico_enable_stdio_uart(${PICOKIT_PRODUCT} 0)
+    # USB configuration is supplied by `swiftpico build` from
+    # initialize_usb_interface_at_start in swiftpico.json.
     """
 
     private static let projectRunner = """
@@ -117,6 +112,7 @@ struct SwiftPicoCommand {
             picoKitVersion: picoKitVersion,
             picotool: nil,
             swiftSDK: nil,
+            initializeUSBInterfaceAtStart: true,
             product: name,
             configuration: "release",
             uf2: "Firmware/build/\(target).uf2",
@@ -378,6 +374,7 @@ struct SwiftPicoCommand {
             let product = firmwareTargetName(option("--product", in: arguments) ?? config.product ?? "PicoKitFirmware")
             let sourceName = option("--product", in: arguments) ?? config.product ?? "PicoKitFirmware"
             configure += ["-DPICOKIT_PRODUCT=\(product)", "-DPICOKIT_SOURCE=\(project.root.appendingPathComponent("Sources/\(sourceName)/main.swift").path)"]
+            configure.append("-DPICOKIT_ENABLE_USB=\(config.initializesUSBInterfaceAtStart ? "ON" : "OFF")")
             let picoKitRoot = try resolvePicoKitRoot(project: project, config: config)
             let picoKitVersion = persistedPicoKitVersion(project: project, fallback: config.picoKitVersion)
             let buildState = FirmwareBuildState(
@@ -1261,11 +1258,24 @@ private struct PicoKitConfig: Codable {
     var picoKitVersion: String? = nil
     var picotool: String? = nil
     var swiftSDK: String? = nil
+    /// Defaults to true for older project files that do not contain this key.
+    var initializeUSBInterfaceAtStart: Bool? = nil
     var product: String? = nil
     var configuration = "release"
     var uf2: String? = nil
     var openOCD = "openocd"
     var openOCDConfig: [String] = []
+
+    var initializesUSBInterfaceAtStart: Bool {
+        initializeUSBInterfaceAtStart ?? true
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case board, firmwareDirectory, picoSDKPath, picoKitPath, picoKitURL
+        case picoKitVersion, picotool, swiftSDK, product, configuration, uf2
+        case openOCD, openOCDConfig
+        case initializeUSBInterfaceAtStart = "initialize_usb_interface_at_start"
+    }
 }
 
 private struct FirmwareBuildState: Codable, Equatable {

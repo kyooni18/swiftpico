@@ -42,6 +42,15 @@ Generated firmware enables the Pico SDK USB stdio reset interface and disables U
 
 ```cmake
 pico_enable_stdio_usb(your_target 1)
+
+USB startup is enabled by default. To build a firmware image without USB CDC or
+the picotool reset interface, add this to `swiftpico.json` and rebuild:
+
+```json
+{
+  "initialize_usb_interface_at_start": false
+}
+```
 pico_enable_stdio_uart(your_target 0)
 ```
 
