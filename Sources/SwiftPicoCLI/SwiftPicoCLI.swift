@@ -24,6 +24,7 @@ private struct ReleaseVersion: Comparable, CustomStringConvertible {
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
     private static let offlinePicoKitVersion = "0.1.5"
+    private static let releaseVersion = "0.1.5.1"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -308,6 +309,16 @@ struct SwiftPicoCommand {
             let sourceName = option("--product", in: arguments) ?? config.product ?? "PicoKitFirmware"
             configure += ["-DPICOKIT_PRODUCT=\(product)", "-DPICOKIT_SOURCE=\(project.root.appendingPathComponent("Sources/\(sourceName)/main.swift").path)"]
             let picoKitRoot = try resolvePicoKitRoot(project: project, config: config)
+            let picoKitVersion = persistedPicoKitVersion(project: project, fallback: config.picoKitVersion)
+            let buildState = FirmwareBuildState(
+                swiftPicoVersion: Self.releaseVersion,
+                picoKitVersion: picoKitVersion
+            )
+            try invalidateFirmwareBuildIfNeeded(
+                buildDirectory: buildDirectory,
+                stateURL: project.root.appendingPathComponent(".swiftpico/firmware-build.json"),
+                expected: buildState
+            )
             configure.append("-DPICOKIT_ROOT=\(picoKitRoot.path)")
             if let picoSDKPath = config.picoSDKPath {
                 let sdkURL = project.url(for: picoSDKPath)
@@ -330,6 +341,7 @@ struct SwiftPicoCommand {
             let build = ["cmake", "--build", buildDirectory.path]
             print("Building firmware: \(build.joined(separator: " "))")
             try runProcess(build)
+            try writeFirmwareBuildState(buildState, to: project.root.appendingPathComponent(".swiftpico/firmware-build.json"))
             print("Firmware build succeeded.")
             return
         }
@@ -708,6 +720,35 @@ struct SwiftPicoCommand {
         for entry in entries where entry.hasPrefix("PicoKit-") {
             try FileManager.default.removeItem(at: reposDir.appendingPathComponent(entry))
         }
+    }
+
+    private static func persistedPicoKitVersion(project: ProjectContext, fallback: String?) -> String {
+        let configURL = project.root.appendingPathComponent("swiftpico.json")
+        let persisted = try? JSONDecoder().decode(PicoKitConfig.self, from: Data(contentsOf: configURL))
+        return persisted?.picoKitVersion ?? fallback ?? "local"
+    }
+
+    private static func invalidateFirmwareBuildIfNeeded(
+        buildDirectory: URL,
+        stateURL: URL,
+        expected: FirmwareBuildState
+    ) throws {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: buildDirectory.path) else { return }
+
+        let existing = try? JSONDecoder().decode(FirmwareBuildState.self, from: Data(contentsOf: stateURL))
+        guard existing != expected else { return }
+
+        let previous = existing.map {
+            "SwiftPico \($0.swiftPicoVersion), PicoKit \($0.picoKitVersion)"
+        } ?? "an unknown earlier build"
+        print("Build versions changed (\(previous) → SwiftPico \(expected.swiftPicoVersion), PicoKit \(expected.picoKitVersion)); rebuilding firmware from scratch.")
+        try fileManager.removeItem(at: buildDirectory)
+    }
+
+    private static func writeFirmwareBuildState(_ state: FirmwareBuildState, to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder.pretty.encode(state).write(to: url, options: .atomic)
     }
 
     private static func updatePicoKitVersion(projectRoot: URL, config: PicoKitConfig) throws {
@@ -1119,6 +1160,11 @@ private struct PicoKitConfig: Codable {
     var uf2: String? = nil
     var openOCD = "openocd"
     var openOCDConfig: [String] = []
+}
+
+private struct FirmwareBuildState: Codable, Equatable {
+    let swiftPicoVersion: String
+    let picoKitVersion: String
 }
 
 private struct ProjectContext {

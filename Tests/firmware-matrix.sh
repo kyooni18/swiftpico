@@ -19,6 +19,14 @@ for board in pico pico_w pico2 pico2_w; do
         cd "$project"
         "$cli" build --configuration release --context "$project/swiftpico.json"
     )
+    if [ "$board" = pico ]; then
+        state="$project/.swiftpico/firmware-build.json"
+        test -f "$state"
+        touch "$project/Firmware/build/stale-version-marker"
+        perl -0pi -e 's/"swiftPicoVersion" : "[^"]+"/"swiftPicoVersion" : "older-build"/' "$state"
+        "$cli" build --configuration release --context "$project/swiftpico.json"
+        test ! -e "$project/Firmware/build/stale-version-marker"
+    fi
 done
 
 # Compile the duplex USB path on both supported MCU families.
