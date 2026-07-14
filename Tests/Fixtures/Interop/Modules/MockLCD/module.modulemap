@@ -1,0 +1,4 @@
+module MockLCD {
+    header "MockLCD.h"
+    export *
+}

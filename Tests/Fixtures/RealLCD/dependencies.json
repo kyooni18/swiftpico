@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "dependencies": [
+    {
+      "name": "pico_display_drivers",
+      "language": "c",
+      "sourceType": "git",
+      "repositoryURL": "https://github.com/tvlad1234/pico-displayDrivs.git",
+      "revision": "42ec0b358377d11e53513247c5b50acc48df2245",
+      "integration": "cmakeTarget",
+      "target": "st7789",
+      "cmakeSubdirectory": "st7789",
+      "compileOptions": ["-Wno-error=incompatible-pointer-types"],
+      "adapters": ["Firmware/Interop/ST7789Adapter.c"],
+      "resources": ["spi:0"]
+    }
+  ]
+}

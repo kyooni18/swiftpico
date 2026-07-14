@@ -5,6 +5,7 @@ set -eu
 # Run this in CI or on a firmware build host; it intentionally builds the
 # generated project for every supported Raspberry Pi board definition.
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export PATH="/opt/homebrew/bin:$PATH"
 kit=${PICOKIT_TEST_ROOT:-"$root/../PicoKit"}
 kit=$(CDPATH= cd -- "$kit" && pwd)
 tmp=$(mktemp -d)

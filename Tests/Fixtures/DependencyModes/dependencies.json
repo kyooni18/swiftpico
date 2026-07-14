@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "dependencies": [
+    {
+      "name": "cmake_fixture",
+      "language": "c",
+      "repositoryURL": "__CMAKE_REPOSITORY__",
+      "revision": "main",
+      "integration": "cmakeTarget",
+      "target": "mock_cmake",
+      "module": {
+        "name": "MockCMake",
+        "umbrellaHeader": "mock_cmake.h"
+      }
+    },
+    {
+      "name": "source_fixture",
+      "language": "c",
+      "repositoryURL": "__SOURCE_REPOSITORY__",
+      "revision": "main",
+      "integration": "sources",
+      "target": "source_fixture",
+      "sources": ["source_only.c"],
+      "includeDirectories": ["include"],
+      "compileDefinitions": ["SOURCE_FIXTURE=1"],
+      "boards": ["pico", "pico2"],
+      "resources": ["gpio:12"]
+    },
+    {
+      "name": "header_fixture",
+      "language": "c",
+      "repositoryURL": "__HEADER_REPOSITORY__",
+      "revision": "main",
+      "integration": "headerOnly",
+      "target": "header_fixture",
+      "includeDirectories": ["include"],
+      "adapters": ["Firmware/Interop/AppInterop.c"]
+    },
+    {
+      "name": "cpp_fixture",
+      "language": "cpp",
+      "repositoryURL": "__CPP_REPOSITORY__",
+      "revision": "main",
+      "integration": "sources",
+      "target": "cpp_fixture",
+      "sources": ["cpp_driver.cpp"],
+      "includeDirectories": ["include"],
+      "adapters": ["Firmware/Interop/CppAdapter.cpp"]
+    }
+  ]
+}

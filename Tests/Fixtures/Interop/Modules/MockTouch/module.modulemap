@@ -1,0 +1,4 @@
+module MockTouch {
+    header "MockTouch.h"
+    export *
+}

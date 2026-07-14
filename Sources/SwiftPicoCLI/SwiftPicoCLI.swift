@@ -6,25 +6,11 @@ import Darwin
 import Glibc
 #endif
 
-private struct ReleaseVersion: Comparable, CustomStringConvertible {
-    let major: Int
-    let minor: Int
-    let patch: Int
-
-    static func < (lhs: ReleaseVersion, rhs: ReleaseVersion) -> Bool {
-        (lhs.major, lhs.minor, lhs.patch) < (rhs.major, rhs.minor, rhs.patch)
-    }
-
-    var description: String {
-        "\(major).\(minor).\(patch)"
-    }
-}
-
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.1.5"
-    private static let releaseVersion = "0.1.5.1"
+    private static let offlinePicoKitVersion = "0.2.0"
+    private static let releaseVersion = "0.2.0"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -70,6 +56,7 @@ struct SwiftPicoCommand {
         case "help", "--help", "-h": print(usage)
         case "init", "new": try initialise(args)
         case "add": try addLibrary(args)
+        case "dependencies", "deps": try dependencies(args)
         case "build", "b": try build(args)
         case "flash", "upload", "f": try flash(args)
         case "make", "m": try build(args); try flash(args)
@@ -104,14 +91,9 @@ struct SwiftPicoCommand {
             URL(fileURLWithPath: $0, relativeTo: currentDirectory).standardizedFileURL
         }
         let skipResolve = arguments.contains("--skip-resolve")
-        let picoKitVersion: String
-        if let requestedVersion = option("--pico-kit-version", in: arguments) {
-            picoKitVersion = requestedVersion
-        } else if skipResolve {
-            picoKitVersion = Self.offlinePicoKitVersion
-        } else {
-            picoKitVersion = try latestPicoKitVersion(from: picoKitURL)
-        }
+        // Project creation is deterministic: it never asks the network for a
+        // newer tag. Version changes are an explicit dependency operation.
+        let picoKitVersion = option("--pico-kit-version", in: arguments) ?? Self.offlinePicoKitVersion
         let projectRoot: URL
         if let path = option("--path", in: arguments) {
             projectRoot = URL(fileURLWithPath: path, relativeTo: currentDirectory).standardizedFileURL
@@ -173,6 +155,7 @@ struct SwiftPicoCommand {
             atomically: true,
             encoding: .utf8
         )
+        try DependencySupport.initializeProject(at: projectRoot)
 
         let runner = projectRoot.appendingPathComponent("swiftpico")
         try projectRunner.write(to: runner, atomically: true, encoding: .utf8)
@@ -181,11 +164,29 @@ struct SwiftPicoCommand {
         try """
         .build/
         Firmware/build/
+        Firmware/Dependencies.local.cmake
         *.uf2
         """.write(to: projectRoot.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
 
-        if !skipResolve, picoKitPath == nil {
-            _ = try installPicoKitDependency(projectRoot: projectRoot, config: config, refresh: true)
+        if !skipResolve {
+            if picoKitPath == nil {
+                _ = try installPicoKitDependency(projectRoot: projectRoot, config: config)
+            } else {
+                try runProcess(["swift", "package", "resolve"], currentDirectory: projectRoot)
+            }
+            _ = try DependencySupport.resolve(
+                root: projectRoot,
+                picoKitURL: picoKitURL,
+                picoKitVersion: picoKitVersion,
+                picoKitPath: picoKitPath?.path
+            )
+        } else if picoKitPath != nil {
+            _ = try DependencySupport.resolve(
+                root: projectRoot,
+                picoKitURL: picoKitURL,
+                picoKitVersion: picoKitVersion,
+                picoKitPath: picoKitPath?.path
+            )
         }
 
         print("""
@@ -197,6 +198,8 @@ struct SwiftPicoCommand {
           - Package.swift (PicoKit dependency: \(picoKitPath?.path ?? picoKitURL), version \(picoKitVersion))
           - \(sourceFile.path)
           - Firmware/CMakeLists.txt
+          - Firmware/dependencies.json
+          - Firmware/Interop/AppInterop.h
           - swiftpico
 
         Next steps:
@@ -219,7 +222,7 @@ struct SwiftPicoCommand {
         case "swift":
             try addSwiftLibrary(libraryArguments, project: project)
         default:
-            try addCLibrary(libraryArguments, project: project)
+            try addCLibrary(libraryArguments, language: kind == "c" ? .c : .cpp, project: project)
         }
     }
 
@@ -237,30 +240,29 @@ struct SwiftPicoCommand {
 
         let manifestURL = project.root.appendingPathComponent("Package.swift")
         var manifest = try String(contentsOf: manifestURL, encoding: .utf8)
-        let dependency = ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(url)), from: \(swiftStringLiteral(version)))"
+        let dependency = ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(url)), exact: \(swiftStringLiteral(version)))"
         let productDependency = ".product(name: \(swiftStringLiteral(product)), package: \(swiftStringLiteral(package)))"
         if !manifest.contains(dependency) {
             manifest = try addSwiftPMDependency(dependency, productDependency: productDependency, to: manifest)
             try manifest.write(to: manifestURL, atomically: true, encoding: .utf8)
         }
 
-        let dependencyFile = project.root.appendingPathComponent("Firmware/Dependencies.cmake")
-        let source = "${CMAKE_CURRENT_LIST_DIR}/../.build/checkouts/\(package)/Sources/\(target)"
-        let block = """
-        # Swift package \(package), product \(product).
-        # This target must be Foundation-free and Embedded Swift-compatible.
-        picokit_add_swift_library(\(product)
-            SOURCE_DIR "\(source)")
-        target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(product))
-        """
-        try appendDependencyBlock(block, to: dependencyFile)
+        try DependencySupport.addSwiftDependency(
+            root: project.root, name: product, url: url, revision: version,
+            package: package, product: product, target: target
+        )
         if !arguments.contains("--skip-resolve") {
             try runProcess(["swift", "package", "resolve"], currentDirectory: project.root)
+            try resolveDependencies(project)
         }
         print("Added Swift library \(product). Import \(product) from Sources/ and run swiftpico build.")
     }
 
-    private static func addCLibrary(_ arguments: [String], project: ProjectContext) throws {
+    private static func addCLibrary(
+        _ arguments: [String],
+        language: FirmwareDependency.Language,
+        project: ProjectContext
+    ) throws {
         guard let url = option("--url", in: arguments),
               let tag = option("--tag", in: arguments),
               let target = option("--target", in: arguments) else {
@@ -273,23 +275,91 @@ struct SwiftPicoCommand {
         guard isCMakeIdentifier(name) else {
             throw CLIError.message("--name must contain only letters, numbers, or underscores")
         }
-        let dependencyFile = project.root.appendingPathComponent("Firmware/Dependencies.cmake")
-        let block = """
-        include(FetchContent)
-        FetchContent_Declare(\(name)
-            GIT_REPOSITORY \(url)
-            GIT_TAG \(tag))
-        FetchContent_MakeAvailable(\(name))
-        target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(target))
-        """
-        try appendDependencyBlock(block, to: dependencyFile)
-        print("Added C/C++ library target \(target). Run swiftpico build to fetch and link it.")
+        try DependencySupport.addCMakeDependency(
+            root: project.root, name: name, language: language,
+            url: url, revision: tag, target: target
+        )
+        if !arguments.contains("--skip-resolve") { try resolveDependencies(project) }
+        print("Added C/C++ library target \(target). Its exact commit is recorded by 'swiftpico dependencies resolve'.")
+    }
+
+    private static func dependencies(_ arguments: [String]) throws {
+        guard let action = arguments.first else {
+            throw CLIError.message("usage: swiftpico dependencies resolve|generate|remove|update|migrate|show")
+        }
+        let project = try context(Array(arguments.dropFirst()))
+        switch action {
+        case "resolve":
+            try runProcess(["swift", "package", "resolve"], currentDirectory: project.root)
+            try resolveDependencies(project)
+            print("Resolved dependencies and regenerated Firmware/Generated/Dependencies.cmake.")
+        case "generate":
+            try DependencySupport.generateFromLock(root: project.root)
+            print("Regenerated Firmware/Generated/Dependencies.cmake from the lock file.")
+        case "remove":
+            guard arguments.count >= 2, !arguments[1].hasPrefix("--") else {
+                throw CLIError.message("usage: swiftpico dependencies remove NAME")
+            }
+            let removed = try DependencySupport.remove(root: project.root, name: arguments[1])
+            if removed.language == .swift, let package = removed.package, let product = removed.product {
+                try removeSwiftPMDependency(package: package, product: product, projectRoot: project.root)
+            }
+            print("Removed \(arguments[1]); run 'swiftpico dependencies resolve' before building.")
+        case "update":
+            guard arguments.count >= 2, !arguments[1].hasPrefix("--"),
+                  let revision = option("--revision", in: arguments) else {
+                throw CLIError.message("usage: swiftpico dependencies update NAME --revision REVISION")
+            }
+            let old = try DependencySupport.update(root: project.root, name: arguments[1], revision: revision)
+            if old.language == .swift, let package = old.package {
+                let packageURL = project.root.appendingPathComponent("Package.swift")
+                var manifest = try String(contentsOf: packageURL, encoding: .utf8)
+                manifest = manifest.replacingOccurrences(
+                    of: ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(old.repositoryURL)), exact: \(swiftStringLiteral(old.revision)))",
+                    with: ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(old.repositoryURL)), exact: \(swiftStringLiteral(revision)))"
+                )
+                try manifest.write(to: packageURL, atomically: true, encoding: .utf8)
+            }
+            print("Updated \(arguments[1]) intent to \(revision); run 'swiftpico dependencies resolve'.")
+        case "migrate":
+            try DependencySupport.migrate(root: project.root)
+            print("Created the v0.2 dependency and application interop structure.")
+        case "show":
+            let manifest = try DependencySupport.loadManifest(root: project.root)
+            if manifest.dependencies.isEmpty { print("No external firmware dependencies.") }
+            for dependency in manifest.dependencies { print("\(dependency.name): \(dependency.language.rawValue) \(dependency.integration.rawValue) @ \(dependency.revision)") }
+        default:
+            throw CLIError.message("unknown dependencies action '\(action)'")
+        }
+    }
+
+    private static func resolveDependencies(_ project: ProjectContext) throws {
+        _ = try DependencySupport.resolve(
+            root: project.root,
+            picoKitURL: project.config.picoKitURL ?? Self.defaultPicoKitURL,
+            picoKitVersion: project.config.picoKitVersion ?? Self.offlinePicoKitVersion,
+            picoKitPath: project.config.picoKitPath
+        )
+    }
+
+    private static func removeSwiftPMDependency(package: String, product: String, projectRoot: URL) throws {
+        let url = projectRoot.appendingPathComponent("Package.swift")
+        let manifest = try String(contentsOf: url, encoding: .utf8)
+        let packagePrefix = ".package(name: \(swiftStringLiteral(package)),"
+        let productEntry = ".product(name: \(swiftStringLiteral(product)), package: \(swiftStringLiteral(package)))"
+        let filtered = manifest.split(separator: "\n", omittingEmptySubsequences: false).filter {
+            !$0.contains(packagePrefix) && !$0.contains(productEntry)
+        }.joined(separator: "\n")
+        try filtered.write(to: url, atomically: true, encoding: .utf8)
     }
 
     // MARK: - build
 
     private static func build(_ arguments: [String]) throws {
         let project = try context(arguments)
+        if FileManager.default.fileExists(atPath: project.root.appendingPathComponent(DependencySupport.manifestPath).path) {
+            try DependencySupport.generateFromLock(root: project.root)
+        }
         let config = project.config
         if let firmwareDirectory = config.firmwareDirectory {
             let configuration = option("--configuration", in: arguments) ?? config.configuration
@@ -567,6 +637,60 @@ struct SwiftPicoCommand {
         }
         print("  Boot volumes: \(findBootVolume()?.path ?? "none")")
         print("  Serial:      \(serialDevices().joined(separator: ", ").isEmpty ? "none" : serialDevices().joined(separator: ", "))")
+        try reportCallbackProbe()
+    }
+
+    private static func reportCallbackProbe() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent("swiftpico-callback-probe-\(UUID().uuidString)", isDirectory: true)
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: root) }
+        let header = root.appendingPathComponent("Callbacks.h")
+        let caller = root.appendingPathComponent("Caller.c")
+        let swift = root.appendingPathComponent("Callback.swift")
+        try """
+        #pragma once
+        #include <stdint.h>
+        int32_t swiftpico_callback_probe(uint32_t value);
+        """.write(to: header, atomically: true, encoding: .utf8)
+        try """
+        #include "Callbacks.h"
+        int32_t call_swiftpico_callback_probe(void) { return swiftpico_callback_probe(42); }
+        """.write(to: caller, atomically: true, encoding: .utf8)
+        try """
+        @_cdecl("swiftpico_callback_probe")
+        public func callbackProbe(_ value: UInt32) -> Int32 { Int32(bitPattern: value) }
+        """.write(to: swift, atomically: true, encoding: .utf8)
+
+        guard let compiler = swiftCompilerPath() else {
+            throw CLIError.message("callback probe failed: real swiftc toolchain binary was not found")
+        }
+        let swiftObject = root.appendingPathComponent("Callback.o")
+        let callerObject = root.appendingPathComponent("Caller.o")
+        let linkedObject = root.appendingPathComponent("Linked.o")
+        do {
+            try runProcess([
+                compiler, "-target", "armv6m-none-none-eabi",
+                "-enable-experimental-feature", "Embedded", "-wmo",
+                "-parse-as-library", "-c", swift.path, "-o", swiftObject.path,
+            ], quiet: true)
+            try runProcess([
+                "arm-none-eabi-gcc", "-mcpu=cortex-m0plus", "-mthumb",
+                "-I", root.path, "-c", caller.path, "-o", callerObject.path,
+            ], quiet: true)
+            try runProcess([
+                "arm-none-eabi-ld", "-r", swiftObject.path, callerObject.path,
+                "-o", linkedObject.path,
+            ], quiet: true)
+            let symbols = try captureProcessOutput(["arm-none-eabi-nm", linkedObject.path])
+            guard symbols.contains(" T swiftpico_callback_probe") else {
+                throw CLIError.message("exported callback symbol was not present")
+            }
+            print("  C callback:  supported (compiled Swift export and C caller)")
+        } catch {
+            print("  C callback:  FAILED")
+            throw CLIError.message("C-to-Swift callback probe failed: \(error.localizedDescription)")
+        }
     }
 
     private static func reportTool(_ executable: String, arguments: [String]) {
@@ -644,7 +768,7 @@ struct SwiftPicoCommand {
         if let picoKitPath {
             picoKitDependency = ".package(path: \(swiftStringLiteral(picoKitPath)))"
         } else {
-            picoKitDependency = ".package(url: \(swiftStringLiteral(picoKitURL)), from: \(swiftStringLiteral(picoKitVersion)))"
+            picoKitDependency = ".package(url: \(swiftStringLiteral(picoKitURL)), exact: \(swiftStringLiteral(picoKitVersion)))"
         }
         return """
         // swift-tools-version: 6.0
@@ -710,6 +834,11 @@ struct SwiftPicoCommand {
             return root
         }
 
+        let checkout = project.root.appendingPathComponent(".build/checkouts/PicoKit", isDirectory: true)
+        if FileManager.default.fileExists(atPath: project.root.appendingPathComponent(DependencySupport.manifestPath).path),
+           !FileManager.default.fileExists(atPath: checkout.appendingPathComponent("Package.swift").path) {
+            throw CLIError.message("locked PicoKit checkout is missing; run 'swiftpico dependencies resolve' before building")
+        }
         return try installPicoKitDependency(projectRoot: project.root, config: config)
     }
 
@@ -751,41 +880,12 @@ struct SwiftPicoCommand {
         try JSONEncoder.pretty.encode(state).write(to: url, options: .atomic)
     }
 
-    private static func updatePicoKitVersion(projectRoot: URL, config: PicoKitConfig) throws {
-        guard let picoKitURL = config.picoKitURL else { return }
-        let latestVersion = try latestPicoKitVersion(from: picoKitURL)
-        guard latestVersion != config.picoKitVersion else { return }
-
-        print("PicoKit updated: \(config.picoKitVersion ?? "nil") → \(latestVersion)")
-
-        let configURL = projectRoot.appendingPathComponent("swiftpico.json")
-        var updatedConfig = config
-        updatedConfig.picoKitVersion = latestVersion
-        try JSONEncoder.pretty.encode(updatedConfig).write(to: configURL)
-
-        let packageURL = projectRoot.appendingPathComponent("Package.swift")
-        var content = try String(contentsOf: packageURL, encoding: .utf8)
-        if let oldVersion = config.picoKitVersion {
-            let pattern = ".package(url: \"\(picoKitURL)\", from: \"\(oldVersion)\")"
-            let replacement = ".package(url: \"\(picoKitURL)\", from: \"\(latestVersion)\")"
-            if content.contains(pattern) {
-                content = content.replacingOccurrences(of: pattern, with: replacement)
-                try content.write(to: packageURL, atomically: true, encoding: .utf8)
-            }
-        }
-    }
-
-    private static func installPicoKitDependency(projectRoot: URL, config: PicoKitConfig, refresh: Bool = false) throws -> URL {
+    private static func installPicoKitDependency(projectRoot: URL, config: PicoKitConfig) throws -> URL {
         let checkout = projectRoot.appendingPathComponent(".build/checkouts/PicoKit", isDirectory: true)
-
-        try updatePicoKitVersion(projectRoot: projectRoot, config: config)
 
         if !FileManager.default.fileExists(atPath: checkout.appendingPathComponent("Package.swift").path) {
             try clearPicoKitRepoCache(projectRoot: projectRoot)
             print("Resolving PicoKit dependency…")
-        } else if refresh {
-            try clearPicoKitRepoCache(projectRoot: projectRoot)
-            print("Updating PicoKit dependency…")
         }
 
         do {
@@ -810,26 +910,6 @@ struct SwiftPicoCommand {
         return checkout
     }
 
-    private static func latestPicoKitVersion(from repositoryURL: String) throws -> String {
-        let output = try captureProcessOutput(["git", "ls-remote", "--tags", "--refs", repositoryURL])
-        let versions = output.split(whereSeparator: \.isNewline).compactMap { line -> ReleaseVersion? in
-            guard let tag = line.split(separator: "\t").last else { return nil }
-            let ref = tag.hasPrefix("refs/tags/") ? tag.dropFirst("refs/tags/".count) : tag[...]
-            let name = ref.hasPrefix("v") ? ref.dropFirst() : ref[...]
-            let components = name.split(separator: ".")
-            guard components.count == 3,
-                  let major = Int(components[0]),
-                  let minor = Int(components[1]),
-                  let patch = Int(components[2]) else { return nil }
-            return ReleaseVersion(major: major, minor: minor, patch: patch)
-        }
-
-        guard let latest = versions.max() else {
-            throw CLIError.message("PicoKit repository has no stable semantic-version tags: \(repositoryURL)")
-        }
-        return latest.description
-    }
-
     private static func captureProcessOutput(_ command: [String]) throws -> String {
         precondition(!command.isEmpty)
         let process = Process()
@@ -848,6 +928,15 @@ struct SwiftPicoCommand {
     }
 
     private static func validateArguments(command: String, arguments: [String]) throws {
+        if command == "dependencies" || command == "deps" {
+            guard let action = arguments.first, ["resolve", "generate", "remove", "update", "migrate", "show"].contains(action) else {
+                throw CLIError.message("usage: swiftpico dependencies resolve|generate|remove|update|migrate|show")
+            }
+            let consumesName = action == "remove" || action == "update"
+            let remainder = Array(arguments.dropFirst(consumesName ? 2 : 1))
+            try validateLibraryArguments(remainder)
+            return
+        }
         if command == "add" {
             guard let kind = arguments.first, ["swift", "c", "cpp", "cxx"].contains(kind) else {
                 throw CLIError.message("usage: swiftpico add swift|c [options]")
@@ -873,7 +962,7 @@ struct SwiftPicoCommand {
     }
 
     private static func validateLibraryArguments(_ arguments: [String]) throws {
-        let valued: Set<String> = ["--url", "--from", "--package", "--product", "--target", "--tag", "--name", "--context"]
+        let valued: Set<String> = ["--url", "--from", "--package", "--product", "--target", "--tag", "--name", "--context", "--revision"]
         let flags: Set<String> = ["--skip-resolve"]
         var index = 0
         while index < arguments.count {
@@ -1119,8 +1208,10 @@ struct SwiftPicoCommand {
       add swift --url URL --from VERSION --package PACKAGE --product PRODUCT
                 [--target TARGET] [--skip-resolve]
           Add an Embedded Swift package target to Package.swift and firmware
-      add c --url URL --tag TAG --target CMAKE_TARGET [--name NAME]
-          Fetch and link a C/C++ CMake target into firmware
+      add c|cpp --url URL --tag TAG --target CMAKE_TARGET [--name NAME]
+          Add and lock a C/C++ CMake target into firmware
+      dependencies resolve|generate|remove NAME|update NAME --revision REV|migrate|show
+          Manage dependencies.json, dependencies.lock, and generated CMake
       build, b [--configuration debug|release] [--swift-sdk SDK] [--product P]
               Build the firmware
       clean, c Remove build artifacts

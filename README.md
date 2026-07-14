@@ -33,7 +33,7 @@ The `serial` template is an exact byte echo using `Serial.read()` and raw-byte
 `Serial.write(_:)`, making it useful for both interactive bring-up and the
 automated USB hardware gate.
 
-`init` creates a standalone Swift package with the latest stable PicoKit tag, a board-specific `swiftpico.json`, a firmware CMake entrypoint, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` when you need a different PicoKit release, or `--skip-resolve` for an offline scaffold. Use `--pico-kit-path /path/to/PicoKit` to develop against a local checkout before a PicoKit change is released as a tag.
+`init` creates a standalone Swift package pinned to one exact PicoKit release, a board-specific `swiftpico.json`, a firmware CMake entrypoint, application-owned interop files, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` to select the release explicitly, or `--skip-resolve` for an offline scaffold. Use `--pico-kit-path /path/to/PicoKit` to develop against a local checkout before a PicoKit change is released as a tag.
 
 Generated firmware enables the Pico SDK USB stdio reset interface and disables UART stdio:
 
@@ -62,9 +62,13 @@ BOOTSEL volume after it mounts. This still requires no BOOTSEL button press.
 
 ## External libraries
 
-Current PicoKit firmware builds automatically load `Firmware/Dependencies.cmake`.
-SwiftPico's `add` command writes that file and, for Swift packages, updates the
-generated `Package.swift` too.
+SwiftPico 0.2 records editable intent in `Firmware/dependencies.json`, exact Git
+commits in `Firmware/dependencies.lock`, and read-only build logic in
+`Firmware/Generated/Dependencies.cmake`. Ordinary builds consume the lock and
+do not select newer dependency revisions. Legacy `Firmware/Dependencies.cmake`
+continues to work during explicit migration. For repositories containing more
+than one CMake project, set `cmakeSubdirectory` on the dependency to configure
+only the project that owns the selected target.
 
 Add a Foundation-free Embedded Swift package target:
 
@@ -89,10 +93,25 @@ swiftpico add c \
   --tag v1.2.0 --target tiny_driver
 ```
 
-The generated `Firmware/Dependencies.cmake` remains ordinary CMake, so it is
-easy to adjust a source directory, add include paths, or link other CMake
-targets. A library must support the Pico cross compiler; for Swift, it must
-also be Foundation-free and compatible with Embedded Swift.
+Manage resolution explicitly:
+
+```sh
+swiftpico dependencies resolve
+swiftpico dependencies show
+swiftpico dependencies update tiny_driver --revision v1.3.0
+swiftpico dependencies remove tiny_driver
+swiftpico dependencies migrate   # preserves a legacy Dependencies.cmake
+```
+
+The schema also supports explicit C/C++ sources, include directories, compile
+definitions and options, board conditions, adapters, module metadata, and
+resource ownership. Header-only libraries should be called through a `.c`
+adapter. C++ libraries should expose an `extern "C"` adapter and compile without
+exceptions or RTTI.
+
+Application headers belong in `Firmware/Interop/AppInterop.h`; callbacks in
+`Callbacks.h`; Clang module maps in `Firmware/Interop/Modules/<Name>`. The
+PicoKit internal bridging header is never modified.
 
 ## Development
 

@@ -150,7 +150,15 @@ extension SwiftPicoCommand {
         @main
         struct SPIExample {
             static func main() {
-                _ = try! PicoSPI(.spi0, frequency: .megahertz(1), sck: try! PicoPin(18), mosi: try! PicoPin(19), miso: try! PicoPin(16))
+                let spi = try! PicoSPI(
+                    .spi0,
+                    frequency: .megahertz(40),
+                    sck: .gpio18,
+                    mosi: .gpio19,
+                    miso: nil,
+                    mode: .mode0
+                )
+                try! spi.write([0x00])
                 while true { sleep(1_000) }
             }
         }

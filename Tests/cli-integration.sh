@@ -16,6 +16,9 @@ for template in blink serial adc pwm i2c spi interrupt watchdog; do
     "$cli" init --board pico-w --name "$template" --template "$template" --path "$project" --skip-resolve
     test -f "$project/Package.swift"
     test -f "$project/Firmware/CMakeLists.txt"
+    test -f "$project/Firmware/dependencies.json"
+    test -f "$project/Firmware/Interop/AppInterop.h"
+    test -f "$project/Firmware/Interop/Callbacks.h"
     test -f "$project/swiftpico"
     grep -q 'import PicoKit' "$project/Sources/$template/main.swift"
 done
@@ -36,20 +39,38 @@ kit=$(CDPATH= cd -- "$root/../PicoKit" && pwd)
 grep -Fq '.package(path: "'"$kit"'")' "$localKitProject/Package.swift"
 grep -Fq '"picoKitPath"' "$localKitProject/swiftpico.json"
 grep -Fq 'PicoKit' "$localKitProject/swiftpico.json"
+test -f "$localKitProject/Firmware/dependencies.lock"
+grep -Fq '"exactCommit"' "$localKitProject/Firmware/dependencies.lock"
 
 libraryProject="$tmp/libraries"
 "$cli" init --board pico --name LibraryTest --template blink --path "$libraryProject" --skip-resolve
 "$cli" add swift --context "$libraryProject/swiftpico.json" \
     --url https://github.com/example/EmbeddedMath.git --from 1.0.0 \
     --package EmbeddedMath --product EmbeddedMath --target EmbeddedMath --skip-resolve
-grep -Fq '.package(name: "EmbeddedMath", url: "https://github.com/example/EmbeddedMath.git", from: "1.0.0")' "$libraryProject/Package.swift"
+grep -Fq '.package(name: "EmbeddedMath", url: "https://github.com/example/EmbeddedMath.git", exact: "1.0.0")' "$libraryProject/Package.swift"
 grep -Fq '.product(name: "EmbeddedMath", package: "EmbeddedMath")' "$libraryProject/Package.swift"
-grep -Fq 'picokit_add_swift_library(EmbeddedMath' "$libraryProject/Firmware/Dependencies.cmake"
-grep -Fq '.build/checkouts/EmbeddedMath/Sources/EmbeddedMath' "$libraryProject/Firmware/Dependencies.cmake"
+grep -Fq '"integration" : "swiftSources"' "$libraryProject/Firmware/dependencies.json"
 "$cli" add c --context "$libraryProject/swiftpico.json" \
-    --url https://github.com/example/tiny-driver.git --tag v1.2.0 --target tiny_driver
-grep -Fq 'FetchContent_Declare(tiny_driver' "$libraryProject/Firmware/Dependencies.cmake"
-grep -Fq 'target_link_libraries(${PICOKIT_PRODUCT} PRIVATE tiny_driver)' "$libraryProject/Firmware/Dependencies.cmake"
+    --url https://github.com/example/tiny-driver.git --tag v1.2.0 --target tiny_driver --skip-resolve
+grep -Fq '"name" : "tiny_driver"' "$libraryProject/Firmware/dependencies.json"
+"$cli" dependencies show --context "$libraryProject/swiftpico.json" | grep -q tiny_driver
+"$cli" dependencies remove tiny_driver --context "$libraryProject/swiftpico.json"
+! grep -Fq '"name" : "tiny_driver"' "$libraryProject/Firmware/dependencies.json"
+"$cli" dependencies remove EmbeddedMath --context "$libraryProject/swiftpico.json"
+! grep -Fq 'EmbeddedMath' "$libraryProject/Package.swift"
+
+migrationProject="$tmp/migration"
+"$cli" init --board pico --name MigrationTest --template blink --path "$migrationProject" \
+    --skip-resolve --pico-kit-path "$kit"
+rm -rf "$migrationProject/Firmware/Generated" "$migrationProject/Firmware/Interop"
+rm -f "$migrationProject/Firmware/dependencies.json" "$migrationProject/Firmware/dependencies.lock"
+touch "$migrationProject/Firmware/Dependencies.cmake"
+"$cli" dependencies migrate --context "$migrationProject/swiftpico.json"
+test -f "$migrationProject/Firmware/Dependencies.cmake"
+test -f "$migrationProject/Firmware/dependencies.json"
+test -f "$migrationProject/Firmware/Interop/AppInterop.h"
+"$cli" dependencies resolve --context "$migrationProject/swiftpico.json"
+test -f "$migrationProject/Firmware/dependencies.lock"
 
 flashProject="$tmp/flash"
 "$cli" init --board pico --name FlashTest --template serial --path "$flashProject" --skip-resolve
