@@ -53,9 +53,15 @@ grep -Fq '"integration" : "swiftSources"' "$libraryProject/Firmware/dependencies
 "$cli" add c --context "$libraryProject/swiftpico.json" \
     --url https://github.com/example/tiny-driver.git --tag v1.2.0 --target tiny_driver --skip-resolve
 grep -Fq '"name" : "tiny_driver"' "$libraryProject/Firmware/dependencies.json"
+"$cli" add c --context "$libraryProject/swiftpico.json" \
+    --url https://github.com/example/vendor-driver.git --tag v2.0.0 --target Vendor::driver --skip-resolve
+grep -Fq '"name" : "vendor_driver"' "$libraryProject/Firmware/dependencies.json"
+grep -Fq '"target" : "Vendor::driver"' "$libraryProject/Firmware/dependencies.json"
 "$cli" dependencies show --context "$libraryProject/swiftpico.json" | grep -q tiny_driver
 "$cli" dependencies remove tiny_driver --context "$libraryProject/swiftpico.json"
 ! grep -Fq '"name" : "tiny_driver"' "$libraryProject/Firmware/dependencies.json"
+"$cli" dependencies remove vendor_driver --context "$libraryProject/swiftpico.json"
+! grep -Fq '"name" : "vendor_driver"' "$libraryProject/Firmware/dependencies.json"
 "$cli" dependencies remove EmbeddedMath --context "$libraryProject/swiftpico.json"
 ! grep -Fq 'EmbeddedMath' "$libraryProject/Package.swift"
 

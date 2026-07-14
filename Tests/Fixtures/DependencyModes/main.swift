@@ -7,6 +7,8 @@ struct DependencyModes {
         _ = mock_cmake_value()
         _ = source_only_value()
         _ = header_adapter_value()
+        _ = local_adapter_value()
+        _ = archive_adapter_value()
         _ = cpp_adapter_identifier()
     }
 }

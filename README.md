@@ -106,9 +106,35 @@ swiftpico dependencies remove tiny_driver
 swiftpico dependencies migrate   # preserves a legacy Dependencies.cmake
 ```
 
-The schema also supports explicit C/C++ sources, include directories, compile
-definitions and options, board conditions, adapters, module metadata, and
-resource ownership. Header-only libraries should be called through a `.c`
+The schema supports the common embedded-library layouts: Git repositories,
+local/vendor directories, and checksum-pinned source archives; CMake targets
+(including namespaced targets such as `Vendor::driver`), explicit C/C++ source
+lists, and header-only libraries. It also carries include directories,
+configuration-header directories, compiler definitions/options, CMake cache
+options, board conditions, adapters, module metadata, and resource ownership.
+
+For example, a source-only archive or a locally vendored driver can remain
+outside PicoKit while still being explicit in the application manifest:
+
+```json
+{
+  "name": "sensor_driver",
+  "language": "c",
+  "sourceType": "archive",
+  "repositoryURL": "https://example.com/sensor-driver-1.4.0.tar.gz",
+  "revision": "1.4.0",
+  "archiveSHA256": "<64-character SHA-256>",
+  "integration": "sources",
+  "sources": ["src/sensor.c"],
+  "includeDirectories": ["include"],
+  "configurationHeaders": ["config/sensor_config.h"],
+  "compileDefinitions": ["SENSOR_NO_FLOAT=1"]
+}
+```
+
+Use `"sourceType": "local"` with a directory path in `repositoryURL` for a
+development checkout; Git-backed local directories record their current commit
+in the lock file. Header-only libraries should be called through a `.c`
 adapter. C++ libraries should expose an `extern "C"` adapter and compile without
 exceptions or RTTI.
 

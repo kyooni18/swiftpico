@@ -9,8 +9,8 @@ import Glibc
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.2.2"
-    private static let releaseVersion = "0.2.2"
+    private static let offlinePicoKitVersion = "0.2.3"
+    private static let releaseVersion = "0.2.3"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -268,10 +268,10 @@ struct SwiftPicoCommand {
               let target = option("--target", in: arguments) else {
             throw CLIError.message("C/C++ library requires --url URL --tag TAG --target CMAKE_TARGET")
         }
-        guard isCMakeIdentifier(target) else {
-            throw CLIError.message("--target must contain only letters, numbers, or underscores")
+        guard isCMakeTargetName(target) else {
+            throw CLIError.message("--target must be a CMake target name, optionally with :: namespaces")
         }
-        let name = option("--name", in: arguments) ?? target.lowercased()
+        let name = option("--name", in: arguments) ?? target.replacingOccurrences(of: "::", with: "_").lowercased()
         guard isCMakeIdentifier(name) else {
             throw CLIError.message("--name must contain only letters, numbers, or underscores")
         }
@@ -823,6 +823,21 @@ struct SwiftPicoCommand {
 
     private static func isCMakeIdentifier(_ value: String) -> Bool {
         !value.isEmpty && value.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || $0 == "_" }
+    }
+
+    private static func isCMakeTargetName(_ value: String) -> Bool {
+        let components = value.split(separator: ":", omittingEmptySubsequences: false)
+        guard !components.isEmpty else { return false }
+        var index = 0
+        while index < components.count {
+            guard !components[index].isEmpty, isCMakeIdentifier(String(components[index])) else { return false }
+            index += 1
+            if index < components.count {
+                guard index + 1 < components.count, components[index].isEmpty else { return false }
+                index += 1
+            }
+        }
+        return true
     }
 
     private static func resolvePicoKitRoot(project: ProjectContext, config: PicoKitConfig) throws -> URL {

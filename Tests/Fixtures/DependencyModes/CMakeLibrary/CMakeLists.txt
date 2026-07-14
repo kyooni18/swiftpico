@@ -1,3 +1,8 @@
 cmake_minimum_required(VERSION 3.13)
+option(MOCK_CMAKE_OPTION "SwiftPico CMake cache option fixture" OFF)
+if(NOT MOCK_CMAKE_OPTION)
+    message(FATAL_ERROR "MOCK_CMAKE_OPTION must be enabled by dependencies.json")
+endif()
 add_library(mock_cmake STATIC mock_cmake.c)
+add_library(Mock::CMake ALIAS mock_cmake)
 target_include_directories(mock_cmake PUBLIC ${CMAKE_CURRENT_LIST_DIR})

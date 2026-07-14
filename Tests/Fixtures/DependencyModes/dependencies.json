@@ -7,7 +7,10 @@
       "repositoryURL": "__CMAKE_REPOSITORY__",
       "revision": "main",
       "integration": "cmakeTarget",
-      "target": "mock_cmake",
+      "target": "Mock::CMake",
+      "cmakeOptions": {
+        "MOCK_CMAKE_OPTION": "ON"
+      },
       "module": {
         "name": "MockCMake",
         "umbrellaHeader": "mock_cmake.h"
@@ -34,6 +37,8 @@
       "integration": "headerOnly",
       "target": "header_fixture",
       "includeDirectories": ["include"],
+      "configurationHeaders": ["config/header_fixture_config.h"],
+      "compileDefinitions": ["HEADER_FIXTURE_ENABLED=1"],
       "adapters": ["Firmware/Interop/AppInterop.c"]
     },
     {
@@ -46,6 +51,29 @@
       "sources": ["cpp_driver.cpp"],
       "includeDirectories": ["include"],
       "adapters": ["Firmware/Interop/CppAdapter.cpp"]
+    },
+    {
+      "name": "local_fixture",
+      "language": "c",
+      "sourceType": "local",
+      "repositoryURL": "__LOCAL_REPOSITORY__",
+      "revision": "development",
+      "integration": "sources",
+      "target": "local_fixture",
+      "sources": ["local_only.c"],
+      "includeDirectories": ["include"]
+    },
+    {
+      "name": "archive_fixture",
+      "language": "c",
+      "sourceType": "archive",
+      "repositoryURL": "__ARCHIVE_URL__",
+      "revision": "1.0.0",
+      "archiveSHA256": "__ARCHIVE_SHA256__",
+      "integration": "sources",
+      "target": "archive_fixture",
+      "sources": ["archive_only.c"],
+      "includeDirectories": ["include"]
     }
   ]
 }
