@@ -10,7 +10,7 @@ import Glibc
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
     private static let offlinePicoKitVersion = "0.2.4"
-    private static let releaseVersion = "0.2.4"
+    private static let releaseVersion = "0.2.5"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -466,6 +466,11 @@ struct SwiftPicoCommand {
             print("Flashing \(source.lastPathComponent) over USB with picotool…")
             do {
                 try runProcess([picotool, "load", "-f", source.path])
+                // Some picotool/ROM combinations leave the device in BOOTSEL
+                // after a successful load despite -f. A best-effort explicit
+                // reboot covers that case; if picotool already restarted the
+                // app, the second command simply cannot find a boot device.
+                try? runProcess([picotool, "reboot"], quiet: true)
                 print("Flashed \(source.lastPathComponent) over USB.")
                 return
             } catch {

@@ -87,5 +87,6 @@ export SWIFTPICO_TEST_LOG="$tmp/picotool-args"
 grep -qx 'load' "$SWIFTPICO_TEST_LOG"
 grep -qx '\-f' "$SWIFTPICO_TEST_LOG"
 grep -qx "$flashProject/Firmware/build/FlashTest.uf2" "$SWIFTPICO_TEST_LOG"
+grep -qx 'reboot' "$SWIFTPICO_TEST_LOG"
 
 echo "SwiftPico CLI integration passed"

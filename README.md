@@ -42,6 +42,8 @@ Generated firmware enables the Pico SDK USB stdio reset interface and disables U
 
 ```cmake
 pico_enable_stdio_usb(your_target 1)
+pico_enable_stdio_uart(your_target 0)
+```
 
 USB startup is enabled by default. To build a firmware image without USB CDC or
 the picotool reset interface, add this to `swiftpico.json` and rebuild:
@@ -50,8 +52,6 @@ the picotool reset interface, add this to `swiftpico.json` and rebuild:
 {
   "initialize_usb_interface_at_start": false
 }
-```
-pico_enable_stdio_uart(your_target 0)
 ```
 
 ## Flashing
@@ -62,7 +62,7 @@ The normal flash path uses the USB interface directly:
 swiftpico flash
 ```
 
-SwiftPico runs `picotool load -f` when available, which asks compatible USB-stdio firmware to reboot into the bootloader, loads the UF2, and returns to the application. If `picotool` is unavailable or cannot reset the board, SwiftPico uses the USB CDC 1200-baud reset exposed by the same USB stdio setting, waits for BOOTSEL storage, and copies the UF2. If you already mounted a BOOTSEL volume, the explicit compatibility path remains available:
+SwiftPico runs `picotool load -f` when available, then explicitly requests an application reboot so supported boards do not remain in BOOTSEL after loading the UF2. If `picotool` is unavailable or cannot reset the board, SwiftPico uses the USB CDC 1200-baud reset exposed by the same USB stdio setting, waits for BOOTSEL storage, and copies the UF2. If you already mounted a BOOTSEL volume, the explicit compatibility path remains available:
 
 ```sh
 swiftpico flash --volume /Volumes/RPI-RP2
