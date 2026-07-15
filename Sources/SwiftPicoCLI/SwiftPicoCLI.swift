@@ -9,8 +9,8 @@ import Glibc
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.2.6"
-    private static let releaseVersion = "0.2.7"
+    private static let offlinePicoKitVersion = "0.2.7"
+    private static let releaseVersion = "0.2.9"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -386,9 +386,11 @@ struct SwiftPicoCommand {
             }
             let firmwareURL = project.url(for: firmwareDirectory)
             let buildDirectory = firmwareURL.appendingPathComponent("build", isDirectory: true)
+            let cmake = cmakeExecutable()
+            let ninja = ninjaExecutable()
             var configure = [
-                "cmake", "-S", firmwareURL.path, "-B", buildDirectory.path,
-                "-G", "Ninja", "-DCMAKE_BUILD_TYPE=\(configuration.capitalized)", "-DPICO_BOARD=\(try canonicalBoard(config.board).cmakeName)",
+                cmake, "-S", firmwareURL.path, "-B", buildDirectory.path,
+                "-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=\(ninja)", "-DCMAKE_BUILD_TYPE=\(configuration.capitalized)", "-DPICO_BOARD=\(try canonicalBoard(config.board).cmakeName)",
             ]
             let product = firmwareTargetName(option("--product", in: arguments) ?? config.product ?? "PicoKitFirmware")
             let sourceName = option("--product", in: arguments) ?? config.product ?? "PicoKitFirmware"
@@ -427,7 +429,7 @@ struct SwiftPicoCommand {
             }
             print("Configuring firmware: \(configure.joined(separator: " "))")
             try runProcess(configure)
-            let build = ["cmake", "--build", buildDirectory.path]
+            let build = [cmake, "--build", buildDirectory.path]
             print("Building firmware: \(build.joined(separator: " "))")
             try runProcess(build)
             try writeFirmwareBuildState(buildState, to: project.root.appendingPathComponent(".swiftpico/firmware-build.json"))
@@ -647,8 +649,8 @@ struct SwiftPicoCommand {
         let picoKitRoot = findPicoKitRoot(from: current)
         print("=== PicoKit Environment ===")
         reportTool("swift", arguments: ["--version"])
-        reportTool("cmake", arguments: ["--version"])
-        reportTool("ninja", arguments: ["--version"])
+        reportTool(cmakeExecutable(), arguments: ["--version"])
+        reportTool(ninjaExecutable(), arguments: ["--version"])
         reportTool("arm-none-eabi-gcc", arguments: ["--version"])
         if let picoKitRoot {
             let sdk = try? sharedPicoSDK(for: picoKitRoot)
@@ -1130,6 +1132,29 @@ struct SwiftPicoCommand {
     private static func option(_ name: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) else { return nil }
         return arguments[index + 1]
+    }
+
+    private static func cmakeExecutable() -> String {
+        #if os(macOS)
+        // Codex and remote-development environments can prepend an x86-only
+        // CMake to PATH on Apple Silicon. Pico SDK builds pioasm as a native
+        // host tool, so use the native Homebrew CMake when it is installed.
+        let homebrewCMake = "/opt/homebrew/bin/cmake"
+        if FileManager.default.isExecutableFile(atPath: homebrewCMake) {
+            return homebrewCMake
+        }
+        #endif
+        return "cmake"
+    }
+
+    private static func ninjaExecutable() -> String {
+        #if os(macOS)
+        let homebrewNinja = "/opt/homebrew/bin/ninja"
+        if FileManager.default.isExecutableFile(atPath: homebrewNinja) {
+            return homebrewNinja
+        }
+        #endif
+        return "ninja"
     }
 
     private static func swiftCompilerPath() -> String? {
