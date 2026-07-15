@@ -465,12 +465,12 @@ struct SwiftPicoCommand {
         if let picotool = requestedPicotool ?? findPicotool(config, projectRoot: project.root) {
             print("Flashing \(source.lastPathComponent) over USB with picotool…")
             do {
-                try runProcess([picotool, "load", "-f", source.path])
-                // Some picotool/ROM combinations leave the device in BOOTSEL
-                // after a successful load despite -f. A best-effort explicit
-                // reboot covers that case; if picotool already restarted the
-                // app, the second command simply cannot find a boot device.
-                try? runProcess([picotool, "reboot"], quiet: true)
+                // `-f` asks picotool to reboot automatically after loading,
+                // which races USB re-enumeration on some RP2350 boards. `-F`
+                // keeps BOOTSEL available until this explicit application
+                // reboot completes the transfer deterministically.
+                try runProcess([picotool, "load", "-F", source.path])
+                try runProcess([picotool, "reboot", "--application"])
                 print("Flashed \(source.lastPathComponent) over USB.")
                 return
             } catch {

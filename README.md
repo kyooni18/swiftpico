@@ -62,7 +62,7 @@ The normal flash path uses the USB interface directly:
 swiftpico flash
 ```
 
-SwiftPico runs `picotool load -f` when available, then explicitly requests an application reboot so supported boards do not remain in BOOTSEL after loading the UF2. If `picotool` is unavailable or cannot reset the board, SwiftPico uses the USB CDC 1200-baud reset exposed by the same USB stdio setting, waits for BOOTSEL storage, and copies the UF2. If you already mounted a BOOTSEL volume, the explicit compatibility path remains available:
+SwiftPico runs `picotool load -F` when available, keeping BOOTSEL connected until one explicit application reboot completes the transfer. This avoids racing USB re-enumeration after a flash. If `picotool` is unavailable or cannot reset the board, SwiftPico uses the USB CDC 1200-baud reset exposed by the same USB stdio setting, waits for BOOTSEL storage, and copies the UF2. If you already mounted a BOOTSEL volume, the explicit compatibility path remains available:
 
 ```sh
 swiftpico flash --volume /Volumes/RPI-RP2
