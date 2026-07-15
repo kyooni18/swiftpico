@@ -210,6 +210,8 @@ enum DependencySupport {
     ) throws -> FirmwareDependencyLock {
         let manifest = try loadManifest(root: root)
         try validate(manifest)
+        let picoKitProgress = picoKitPath == nil ? "v\(picoKitVersion)" : "from local checkout"
+        print("  Resolving PicoKit revision \(picoKitProgress)…")
         let toolchain = try firstLine(run(["swiftc", "--version"]))
         let picoResolution: FirmwareDependencyLock.PicoKitResolution
         if let picoKitPath {
@@ -236,6 +238,7 @@ enum DependencySupport {
         var resolutions: [FirmwareDependencyLock.Resolution] = []
         for dependency in manifest.dependencies.sorted(by: { $0.name < $1.name }) {
             let sourceType = try sourceType(of: dependency)
+            print("  Resolving \(dependency.name) [\(sourceType.rawValue)] @ \(dependency.revision)…")
             let sourceURL: String
             let exactCommit: String
             switch sourceType {
@@ -267,7 +270,9 @@ enum DependencySupport {
             ))
         }
         let lock = FirmwareDependencyLock(picoKit: picoResolution, dependencies: resolutions)
+        print("  Writing \(lockPath)…")
         try write(lock, to: root.appendingPathComponent(lockPath))
+        print("  Generating \(generatedPath)…")
         try generate(root: root, manifest: manifest, lock: lock)
         return lock
     }

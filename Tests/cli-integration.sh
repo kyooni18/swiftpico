@@ -23,8 +23,15 @@ for template in blink serial adc pwm i2c spi interrupt watchdog; do
     grep -q 'import PicoKit' "$project/Sources/$template/main.swift"
 done
 
+progressProject="$tmp/progress"
+progressOutput=$("$cli" init --board pico --name Progress --template blink --path "$progressProject" --skip-resolve)
+printf '%s\n' "$progressOutput" | grep -q 'Starting SwiftPico project initialization'
+printf '%s\n' "$progressOutput" | grep -q 'Creating project configuration and source files'
+printf '%s\n' "$progressOutput" | grep -q 'Skipping dependency resolution'
+
 grep -q 'github.com/kyooni18/PicoKit.git' "$tmp/serial/Package.swift"
-grep -q 'PICOKIT_ROOT}/Firmware/CMakeLists.txt' "$tmp/serial/Firmware/CMakeLists.txt"
+grep -q 'PICO_SDK_PATH must point to the shared Pico SDK' "$tmp/serial/Firmware/CMakeLists.txt"
+! grep -q 'Vendor/pico-sdk' "$tmp/serial/Firmware/CMakeLists.txt"
 grep -Fq 'initialize_usb_interface_at_start' "$tmp/serial/swiftpico.json"
 ! grep -Fq 'pico_enable_stdio_usb(${PICOKIT_PRODUCT} 1)' "$tmp/serial/Firmware/CMakeLists.txt"
 grep -q 'Serial.read()' "$tmp/serial/Sources/serial/main.swift"
@@ -75,7 +82,10 @@ touch "$migrationProject/Firmware/Dependencies.cmake"
 test -f "$migrationProject/Firmware/Dependencies.cmake"
 test -f "$migrationProject/Firmware/dependencies.json"
 test -f "$migrationProject/Firmware/Interop/AppInterop.h"
-"$cli" dependencies resolve --context "$migrationProject/swiftpico.json"
+resolveOutput=$("$cli" dependencies resolve --context "$migrationProject/swiftpico.json")
+printf '%s\n' "$resolveOutput" | grep -q 'Resolving Swift package dependencies in'
+printf '%s\n' "$resolveOutput" | grep -q 'Writing Firmware/dependencies.lock'
+printf '%s\n' "$resolveOutput" | grep -q 'Generating Firmware/Generated/Dependencies.cmake'
 test -f "$migrationProject/Firmware/dependencies.lock"
 
 flashProject="$tmp/flash"

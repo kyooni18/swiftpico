@@ -38,6 +38,8 @@ automated USB hardware gate.
 
 `init` creates a standalone Swift package pinned to one exact PicoKit release, a board-specific `swiftpico.json`, a firmware CMake entrypoint, application-owned interop files, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` to select the release explicitly, or `--skip-resolve` for an offline scaffold. Use `--pico-kit-path /path/to/PicoKit` to develop against a local checkout before a PicoKit change is released as a tag.
 
+Pico SDK is cached once per pinned SDK commit rather than initialized inside every project’s PicoKit checkout. `swiftpico build` creates the shared cache automatically. By default it uses the platform cache directory; set `SWIFTPICO_CACHE_DIR` to place it on a shared drive or in your CI cache. A project can still set `picoSDKPath` in `swiftpico.json` to use an explicit SDK checkout.
+
 Generated firmware enables the Pico SDK USB stdio reset interface and disables UART stdio:
 
 ```cmake

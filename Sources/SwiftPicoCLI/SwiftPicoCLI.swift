@@ -9,7 +9,7 @@ import Glibc
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.2.5"
+    private static let offlinePicoKitVersion = "0.2.6"
     private static let releaseVersion = "0.2.7"
 
     private static let firmwareProjectManifest = """
@@ -19,7 +19,9 @@ struct SwiftPicoCommand {
         message(FATAL_ERROR "PICOKIT_ROOT must point to the resolved PicoKit package checkout")
     endif()
 
-    set(PICO_SDK_PATH "${PICOKIT_ROOT}/Vendor/pico-sdk" CACHE PATH "Pico SDK path")
+    if(NOT DEFINED PICO_SDK_PATH)
+        message(FATAL_ERROR "PICO_SDK_PATH must point to the shared Pico SDK. Run 'swiftpico build' or pass -DPICO_SDK_PATH=/path/to/pico-sdk.")
+    endif()
     include("${PICO_SDK_PATH}/external/pico_sdk_import.cmake")
     project(PicoKitFirmware LANGUAGES C CXX ASM)
     set(PICOKIT_PROJECT_INITIALIZED YES)
@@ -86,6 +88,11 @@ struct SwiftPicoCommand {
             URL(fileURLWithPath: $0, relativeTo: currentDirectory).standardizedFileURL
         }
         let skipResolve = arguments.contains("--skip-resolve")
+        print("Starting SwiftPico project initialization…")
+        print("  Board: \(board)")
+        print("  Name: \(name)")
+        print("  Template: \(template)")
+        print("  Destination: \(currentDirectory.appendingPathComponent(name).path)")
         // Project creation is deterministic: it never asks the network for a
         // newer tag. Version changes are an explicit dependency operation.
         let picoKitVersion = option("--pico-kit-version", in: arguments) ?? Self.offlinePicoKitVersion
@@ -121,6 +128,7 @@ struct SwiftPicoCommand {
                 ? ["interface/cmsis-dap.cfg", "target/rp2350.cfg"]
                 : ["interface/cmsis-dap.cfg", "target/rp2040.cfg"]
         )
+        print("Creating project configuration and source files…")
         try JSONEncoder.pretty.encode(config).write(to: configURL)
 
         let manifest = projectManifest(
@@ -151,6 +159,7 @@ struct SwiftPicoCommand {
             atomically: true,
             encoding: .utf8
         )
+        print("Preparing firmware dependency metadata…")
         try DependencySupport.initializeProject(at: projectRoot)
 
         let runner = projectRoot.appendingPathComponent("swiftpico")
@@ -165,24 +174,31 @@ struct SwiftPicoCommand {
         """.write(to: projectRoot.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
 
         if !skipResolve {
+            print("Resolving PicoKit and Swift package dependencies…")
             if picoKitPath == nil {
                 _ = try installPicoKitDependency(projectRoot: projectRoot, config: config)
             } else {
+                print("  Resolving local PicoKit checkout at \(picoKitPath!.path)…")
                 try runProcess(["swift", "package", "resolve"], currentDirectory: projectRoot)
             }
+            print("  Locking PicoKit and firmware dependencies…")
             _ = try DependencySupport.resolve(
                 root: projectRoot,
                 picoKitURL: picoKitURL,
                 picoKitVersion: picoKitVersion,
                 picoKitPath: picoKitPath?.path
             )
+            print("  Dependency lock and generated CMake are ready.")
         } else if picoKitPath != nil {
+            print("Skipping Swift package resolution; recording the local PicoKit checkout…")
             _ = try DependencySupport.resolve(
                 root: projectRoot,
                 picoKitURL: picoKitURL,
                 picoKitVersion: picoKitVersion,
                 picoKitPath: picoKitPath?.path
             )
+        } else {
+            print("Skipping dependency resolution (--skip-resolve).")
         }
 
         print("""
@@ -286,8 +302,11 @@ struct SwiftPicoCommand {
         let project = try context(Array(arguments.dropFirst()))
         switch action {
         case "resolve":
+            print("Resolving Swift package dependencies in \(project.root.path)…")
             try runProcess(["swift", "package", "resolve"], currentDirectory: project.root)
+            print("Resolving PicoKit and firmware dependency revisions…")
             try resolveDependencies(project)
+            print("Writing dependencies.lock and generated CMake…")
             print("Resolved dependencies and regenerated Firmware/Generated/Dependencies.cmake.")
         case "generate":
             try DependencySupport.generateFromLock(root: project.root)
@@ -389,6 +408,9 @@ struct SwiftPicoCommand {
             configure.append("-DPICOKIT_ROOT=\(picoKitRoot.path)")
             if let picoSDKPath = config.picoSDKPath {
                 let sdkURL = project.url(for: picoSDKPath)
+                configure.append("-DPICO_SDK_PATH=\(sdkURL.path)")
+            } else {
+                let sdkURL = try sharedPicoSDK(for: picoKitRoot)
                 configure.append("-DPICO_SDK_PATH=\(sdkURL.path)")
             }
             if try canonicalBoard(config.board).chip == .rp2350 {
@@ -629,10 +651,10 @@ struct SwiftPicoCommand {
         reportTool("ninja", arguments: ["--version"])
         reportTool("arm-none-eabi-gcc", arguments: ["--version"])
         if let picoKitRoot {
-            let sdk = picoKitRoot.appendingPathComponent("Vendor/pico-sdk")
+            let sdk = try? sharedPicoSDK(for: picoKitRoot)
             let bridge = picoKitRoot.appendingPathComponent("Firmware/PicoKitSDKBridge.c")
             print("  PicoKit:     \(picoKitRoot.path)")
-            print("  Pico SDK:    \(FileManager.default.fileExists(atPath: sdk.path) ? sdk.path : "MISSING")")
+            print("  Pico SDK:    \(sdk?.path ?? "MISSING (run swiftpico build)")")
             print("  SDK bridge:  \(FileManager.default.fileExists(atPath: bridge.path) ? "available" : "MISSING")")
         } else {
             print("  PicoKit:     not found from \(current.path)")
@@ -902,7 +924,9 @@ struct SwiftPicoCommand {
 
         if !FileManager.default.fileExists(atPath: checkout.appendingPathComponent("Package.swift").path) {
             try clearPicoKitRepoCache(projectRoot: projectRoot)
-            print("Resolving PicoKit dependency…")
+            print("  PicoKit checkout missing; resolving the requested package revision…")
+        } else {
+            print("  PicoKit checkout already present; refreshing Swift package resolution…")
         }
 
         do {
@@ -916,15 +940,79 @@ struct SwiftPicoCommand {
             throw CLIError.message("PicoKit dependency was not resolved at \(checkout.path)")
         }
 
-        let sdk = checkout.appendingPathComponent("Vendor/pico-sdk", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: sdk.appendingPathComponent("CMakeLists.txt").path) {
-            print("Initializing Pico SDK submodule…")
+        // Published PicoKit versions before the shared-cache transition still
+        // contain the SDK submodule. Preserve their install path so updating
+        // SwiftPico does not break existing pinned projects.
+        let revision = checkout.appendingPathComponent("Vendor/pico-sdk.revision")
+        let legacySDK = checkout.appendingPathComponent("Vendor/pico-sdk", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: revision.path),
+           !FileManager.default.fileExists(atPath: legacySDK.appendingPathComponent("CMakeLists.txt").path) {
+            print("  PicoKit release uses the legacy Pico SDK submodule; initializing it…")
             try runProcess(["git", "-C", checkout.path, "submodule", "update", "--init", "--recursive"], currentDirectory: projectRoot)
         }
-        guard FileManager.default.fileExists(atPath: sdk.appendingPathComponent("CMakeLists.txt").path) else {
-            throw CLIError.message("Pico SDK was not initialized inside \(checkout.path)/Vendor/pico-sdk")
-        }
+        _ = try sharedPicoSDK(for: checkout)
         return checkout
+    }
+
+    /// PicoKit pins the SDK revision in a tiny tracked file. The full SDK is
+    /// materialized once in a user cache, rather than once per SwiftPM checkout.
+    private static func sharedPicoSDK(for picoKitRoot: URL) throws -> URL {
+        let revisionURL = picoKitRoot.appendingPathComponent("Vendor/pico-sdk.revision")
+        guard FileManager.default.fileExists(atPath: revisionURL.path) else {
+            // Compatibility for a PicoKit checkout from before shared SDK support.
+            let legacy = picoKitRoot.appendingPathComponent("Vendor/pico-sdk")
+            guard FileManager.default.fileExists(atPath: legacy.appendingPathComponent("CMakeLists.txt").path) else {
+                throw CLIError.message("PicoKit does not declare a Pico SDK revision. Update PicoKit, or set picoSDKPath in swiftpico.json.")
+            }
+            return legacy
+        }
+
+        let revision = try String(contentsOf: revisionURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard revision.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil else {
+            throw CLIError.message("invalid Pico SDK revision in \(revisionURL.path)")
+        }
+
+        let root = sharedPicoSDKCacheRoot()
+        let sdk = root.appendingPathComponent("pico-sdk/\(revision)", isDirectory: true)
+        if FileManager.default.fileExists(atPath: sdk.appendingPathComponent("CMakeLists.txt").path) {
+            return sdk
+        }
+
+        try FileManager.default.createDirectory(at: sdk.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let temporary = sdk.deletingLastPathComponent()
+            .appendingPathComponent(".\(revision).\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        print("  Downloading shared Pico SDK \(revision.prefix(12))…")
+        try runProcess(["git", "clone", "--filter=blob:none", "https://github.com/raspberrypi/pico-sdk.git", temporary.path])
+        try runProcess(["git", "-C", temporary.path, "checkout", "--detach", revision])
+        try runProcess(["git", "-C", temporary.path, "submodule", "update", "--init", "--recursive"])
+        guard FileManager.default.fileExists(atPath: temporary.appendingPathComponent("CMakeLists.txt").path) else {
+            throw CLIError.message("shared Pico SDK checkout did not contain CMakeLists.txt")
+        }
+        do {
+            try FileManager.default.moveItem(at: temporary, to: sdk)
+        } catch where FileManager.default.fileExists(atPath: sdk.appendingPathComponent("CMakeLists.txt").path) {
+            // Another SwiftPico process won the race and created the same cache entry.
+        }
+        return sdk
+    }
+
+    private static func sharedPicoSDKCacheRoot() -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        if let path = environment["SWIFTPICO_CACHE_DIR"], !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        #if os(macOS)
+        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SwiftPico", isDirectory: true)
+        #else
+        if let path = environment["XDG_CACHE_HOME"], !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent("swiftpico", isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/swiftpico", isDirectory: true)
+        #endif
     }
 
     private static func captureProcessOutput(_ command: [String]) throws -> String {
