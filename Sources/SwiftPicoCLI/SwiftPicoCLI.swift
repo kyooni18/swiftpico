@@ -9,8 +9,8 @@ import Glibc
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.2.7"
-    private static let releaseVersion = "0.2.9"
+    private static let offlinePicoKitVersion = "0.2.8"
+    private static let releaseVersion = "0.2.10"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -485,6 +485,28 @@ struct SwiftPicoCommand {
         }
 
         let requestedPicotool = option("--picotool", in: arguments).map { project.url(for: $0).path }
+
+        // The Pico SDK's CDC reset is independent of picotool's forced-reset
+        // device matching. Prefer it for the ordinary one-board workflow: it
+        // avoids picotool versions that fail to preserve a macOS USB serial
+        // identifier across the application-to-BOOTSEL re-enumeration.
+        if requestedPicotool == nil, serialDevices().count == 1 {
+            print("Requesting BOOTSEL over USB serial…")
+            do {
+                try resetToBootloaderOverUSB()
+                if let bootVolume = waitForBootVolume() {
+                    try copyUF2ToVolume(source, volume: bootVolume)
+                    ejectBootVolume(bootVolume)
+                    print("Flashed \(source.lastPathComponent) to \(bootVolume.path) over USB.")
+                    print("Ejected the BOOTSEL volume; Pico is restarting.")
+                    return
+                }
+                print("USB serial reset did not mount a BOOTSEL volume; trying picotool…")
+            } catch {
+                print("USB serial reset failed (\(error.localizedDescription)); trying picotool…")
+            }
+        }
+
         var picotoolFailed = false
         if let picotool = requestedPicotool ?? findPicotool(config, projectRoot: project.root) {
             print("Flashing \(source.lastPathComponent) over USB with picotool…")
@@ -512,8 +534,8 @@ struct SwiftPicoCommand {
         }
 
         // USB stdio exposes the Pico SDK reset interface even when picotool is
-        // not installed. Open the sole CDC device at 1200 baud, wait for the
-        // BOOTSEL drive, then use the same UF2 copy path as --volume.
+        // not installed. The bounded reset helper cannot leave `stty` holding
+        // the serial device after an interrupted or unresponsive request.
         if serialDevices().count == 1 {
             print("Requesting BOOTSEL over USB serial…")
             try resetToBootloaderOverUSB()
@@ -1207,12 +1229,13 @@ struct SwiftPicoCommand {
         }
 
         // The Pico SDK treats 1200 baud as a USB CDC request to reboot into
-        // BOOTSEL. `stty` opens the device, sends the line-coding request, and
-        // closes it, so this works without a serial monitor or extra driver.
+        // BOOTSEL. macOS may block inside termios for an unresponsive CDC
+        // endpoint, so keep the compatibility command in a short-lived child
+        // that is forcibly terminated instead of allowing flash to wedge.
         #if os(macOS)
-        try runProcess(["stty", "-f", device, "1200", "raw", "-echo"], quiet: true)
+        try runProcess(["stty", "-f", device, "1200", "raw", "-echo"], quiet: true, timeout: 2)
         #else
-        try runProcess(["stty", "-F", device, "1200", "raw", "-echo"], quiet: true)
+        try runProcess(["stty", "-F", device, "1200", "raw", "-echo"], quiet: true, timeout: 2)
         #endif
     }
 
@@ -1307,7 +1330,7 @@ struct SwiftPicoCommand {
         return ["RPI-RP2", "RPI-RP2350", "RP2350"].contains(name)
     }
 
-    private static func runProcess(_ command: [String], currentDirectory: URL? = nil, quiet: Bool = false) throws {
+    private static func runProcess(_ command: [String], currentDirectory: URL? = nil, quiet: Bool = false, timeout: TimeInterval? = nil) throws {
         precondition(!command.isEmpty)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -1321,7 +1344,26 @@ struct SwiftPicoCommand {
             process.standardError = FileHandle.nullDevice
         }
         try process.run()
+        var timedOut = false
+        let timeoutTimer: DispatchSourceTimer?
+        if let timeout {
+            let timer = DispatchSource.makeTimerSource(queue: .global())
+            timer.schedule(deadline: .now() + timeout)
+            timer.setEventHandler {
+                guard process.isRunning else { return }
+                timedOut = true
+                process.terminate()
+            }
+            timer.resume()
+            timeoutTimer = timer
+        } else {
+            timeoutTimer = nil
+        }
         process.waitUntilExit()
+        timeoutTimer?.cancel()
+        if timedOut {
+            throw CLIError.message("command timed out after \(Int(timeout ?? 0)) seconds: \(command.joined(separator: " "))")
+        }
         guard process.terminationStatus == 0 else { throw CLIError.message("command failed (exit \(process.terminationStatus)): \(command.joined(separator: " "))") }
     }
 
