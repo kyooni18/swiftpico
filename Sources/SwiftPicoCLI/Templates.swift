@@ -117,7 +117,7 @@ extension SwiftPicoCommand {
                 let pin = try! PicoPin(0)
                 let pwm = try! PicoPWM(pin: pin, frequency: .kilohertz(1))
                 while true {
-                    try! analogWrite(0, 128, using: pwm)
+                    try! analogWrite(0, UInt8(128), using: pwm)
                     sleep(10)
                 }
             }
@@ -158,7 +158,7 @@ extension SwiftPicoCommand {
                     miso: nil,
                     mode: .mode0
                 )
-                try! spi.write([0x00])
+                try! spi.write([UInt8(0x00)])
                 while true { sleep(1_000) }
             }
         }
