@@ -79,7 +79,7 @@ extension SwiftPicoCommand {
             static func main() {
                 while true {
                     if let byte = Serial.read() {
-                        Serial.write([byte])
+                        Serial.write(byte)
                     } else {
                         sleepMicroseconds(100)
                     }

@@ -9,8 +9,8 @@ import Glibc
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.2.8"
-    private static let releaseVersion = "0.2.10"
+    private static let offlinePicoKitVersion = "0.2.9"
+    private static let releaseVersion = "0.2.11"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -478,27 +478,32 @@ struct SwiftPicoCommand {
 
         if let requestedVolume = option("--volume", in: arguments).map({ project.url(for: $0) }) {
             try copyUF2ToVolume(source, volume: requestedVolume)
-            ejectBootVolume(requestedVolume)
             print("Flashed \(source.lastPathComponent) to \(requestedVolume.path)")
-            print("Ejected the BOOTSEL volume; Pico is restarting.")
+            try waitForApplication(config, bootVolume: requestedVolume)
             return
         }
 
         let requestedPicotool = option("--picotool", in: arguments).map { project.url(for: $0).path }
+        let picotool = requestedPicotool ?? findPicotool(config, projectRoot: project.root)
+
+        // Resolve the board's current state before asking either USB stack to
+        // transition it. This avoids a second reset while Disk Arbitration is
+        // still publishing an already-mounted BOOTSEL device.
+        if let bootVolume = findBootVolume() {
+            try flashBootloader(source, volume: bootVolume, picotool: picotool)
+            try waitForApplication(config, bootVolume: bootVolume)
+            return
+        }
 
         // The Pico SDK's CDC reset is independent of picotool's forced-reset
-        // device matching. Prefer it for the ordinary one-board workflow: it
-        // avoids picotool versions that fail to preserve a macOS USB serial
-        // identifier across the application-to-BOOTSEL re-enumeration.
+        // serial tracking. Prefer it for the ordinary one-board workflow.
         if requestedPicotool == nil, serialDevices().count == 1 {
             print("Requesting BOOTSEL over USB serial…")
             do {
                 try resetToBootloaderOverUSB()
                 if let bootVolume = waitForBootVolume() {
-                    try copyUF2ToVolume(source, volume: bootVolume)
-                    ejectBootVolume(bootVolume)
-                    print("Flashed \(source.lastPathComponent) to \(bootVolume.path) over USB.")
-                    print("Ejected the BOOTSEL volume; Pico is restarting.")
+                    try flashBootloader(source, volume: bootVolume, picotool: picotool)
+                    try waitForApplication(config, bootVolume: bootVolume)
                     return
                 }
                 print("USB serial reset did not mount a BOOTSEL volume; trying picotool…")
@@ -508,45 +513,21 @@ struct SwiftPicoCommand {
         }
 
         var picotoolFailed = false
-        if let picotool = requestedPicotool ?? findPicotool(config, projectRoot: project.root) {
+        if let picotool {
             print("Flashing \(source.lastPathComponent) over USB with picotool…")
             do {
-                // `-f` asks picotool to reboot automatically after loading,
-                // which races USB re-enumeration on some RP2350 boards. `-F`
-                // keeps BOOTSEL available until this explicit application
-                // reboot completes the transfer deterministically.
-                try runProcess([picotool, "load", "-F", source.path])
+                // This is the fallback for a board picotool can see but whose
+                // BOOTSEL volume was not published. Keep BOOTSEL accessible
+                // until the verified load is complete, then reboot explicitly.
+                try runProcess([picotool, "load", "-F", "-v", source.path])
                 try runProcess([picotool, "reboot", "--application"])
+                try waitForApplication(config)
                 print("Flashed \(source.lastPathComponent) over USB.")
                 return
             } catch {
                 picotoolFailed = true
                 print("picotool could not enter BOOTSEL; falling back to USB serial reset…")
             }
-        }
-
-        if let mountedVolume = findBootVolume() {
-            try copyUF2ToVolume(source, volume: mountedVolume)
-            ejectBootVolume(mountedVolume)
-            print("Flashed \(source.lastPathComponent) to \(mountedVolume.path)")
-            print("Ejected the BOOTSEL volume; Pico is restarting.")
-            return
-        }
-
-        // USB stdio exposes the Pico SDK reset interface even when picotool is
-        // not installed. The bounded reset helper cannot leave `stty` holding
-        // the serial device after an interrupted or unresponsive request.
-        if serialDevices().count == 1 {
-            print("Requesting BOOTSEL over USB serial…")
-            try resetToBootloaderOverUSB()
-            guard let bootVolume = waitForBootVolume() else {
-                throw CLIError.message("Pico did not mount a BOOTSEL volume after the USB serial reset")
-            }
-            try copyUF2ToVolume(source, volume: bootVolume)
-            ejectBootVolume(bootVolume)
-            print("Flashed \(source.lastPathComponent) to \(bootVolume.path) over USB.")
-            print("Ejected the BOOTSEL volume; Pico is restarting.")
-            return
         }
 
         let picotoolReason = picotoolFailed
@@ -589,20 +570,15 @@ struct SwiftPicoCommand {
             print("Using serial device \(device)")
         }
         let baud = option("--baud", in: arguments) ?? "115200"
-        #if os(macOS)
-        try runProcess(["stty", "-f", device, baud, "raw", "-echo"])
-        #else
-        try runProcess(["stty", "-F", device, baud, "raw", "-echo"])
-        #endif
+        guard let baudValue = UInt32(baud) else {
+            throw CLIError.message("Invalid serial baud rate: \(baud)")
+        }
+        try configureSerialPort(device, baud: speed_t(baudValue))
 
         let restoreTerminal: (() -> Void)?
         if isatty(STDIN_FILENO) != 0 {
-            let savedTerminal = try captureProcessOutput(["stty", "-g"])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            // Character-at-a-time input while retaining signal processing, so
-            // Ctrl-C still exits the monitor instead of being sent to firmware.
-            try runProcess(["stty", "-icanon", "min", "1", "time", "0", "-echo"])
-            restoreTerminal = { try? runProcess(["stty", savedTerminal]) }
+            let savedTerminal = try configureMonitorInput()
+            restoreTerminal = { restoreMonitorInput(savedTerminal) }
         } else {
             restoreTerminal = nil
         }
@@ -617,20 +593,24 @@ struct SwiftPicoCommand {
         interrupt.resume()
 
         let writer = SerialWriter()
+        // Open the write side before accepting terminal input. Otherwise a
+        // keystroke entered as soon as the monitor starts is read by the input
+        // thread while `handle` is still nil and is silently dropped.
+        try writer.open(device)
         let inputThread = Thread {
             while true {
-                let data = FileHandle.standardInput.availableData
-                guard !data.isEmpty else { return }
+                guard let data = readMonitorInput() else { return }
                 writer.write(data)
             }
         }
         inputThread.qualityOfService = .userInteractive
         inputThread.start()
 
-        print("Monitoring \(device) at \(baud) baud. Type to send; press Ctrl-C to stop.")
+        FileHandle.standardOutput.write(Data(
+            "Monitoring \(device) at \(baud) baud. Type to send; press Ctrl-C to stop.\n".utf8
+        ))
         reconnect: while true {
             let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: device))
-            try writer.open(device)
             while true {
                 let data = handle.availableData
                 guard !data.isEmpty else {
@@ -1248,12 +1228,50 @@ struct SwiftPicoCommand {
         return nil
     }
 
-    private static func ejectBootVolume(_ volume: URL) {
-        #if os(macOS)
-        try? runProcess(["diskutil", "eject", volume.path], quiet: true)
-        #else
-        try? runProcess(["umount", volume.path], quiet: true)
-        #endif
+    private static func flashBootloader(_ source: URL, volume: URL, picotool: String?) throws {
+        if let picotool {
+            print("Flashing \(source.lastPathComponent) over USB with picotool…")
+            try runProcess([picotool, "load", "-v", source.path])
+            try runProcess([picotool, "reboot", "--application"])
+            print("Flashed and verified \(source.lastPathComponent) over USB.")
+        } else {
+            try copyUF2ToVolume(source, volume: volume)
+            print("Flashed \(source.lastPathComponent) to \(volume.path); Pico is restarting.")
+        }
+    }
+
+    private static func waitForApplication(
+        _ config: PicoKitConfig,
+        bootVolume: URL? = nil,
+        timeout: TimeInterval = 12
+    ) throws {
+        func bootVolumeIsPresent() -> Bool {
+            if let bootVolume {
+                return FileManager.default.fileExists(atPath: bootVolume.path)
+            }
+            return findBootVolume() != nil
+        }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var bootVolumeHasGone = !bootVolumeIsPresent()
+        repeat {
+            if !bootVolumeHasGone {
+                bootVolumeHasGone = !bootVolumeIsPresent()
+            }
+            if bootVolumeHasGone,
+               !config.initializesUSBInterfaceAtStart || !serialDevices().isEmpty {
+                print(config.initializesUSBInterfaceAtStart
+                    ? "Pico restarted and USB serial is ready."
+                    : "Pico restarted in application mode.")
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+
+        if !bootVolumeHasGone {
+            throw CLIError.message("UF2 transfer completed, but the Pico remained in BOOTSEL mode")
+        }
+        throw CLIError.message("UF2 transfer completed, but the Pico USB serial interface did not return within \(Int(timeout)) seconds")
     }
 
     private static func isToolAvailable(_ executable: String) -> Bool {
@@ -1345,14 +1363,21 @@ struct SwiftPicoCommand {
         }
         try process.run()
         var timedOut = false
+        let timeoutLock = NSLock()
         let timeoutTimer: DispatchSourceTimer?
         if let timeout {
             let timer = DispatchSource.makeTimerSource(queue: .global())
             timer.schedule(deadline: .now() + timeout)
             timer.setEventHandler {
                 guard process.isRunning else { return }
+                timeoutLock.lock()
                 timedOut = true
+                timeoutLock.unlock()
                 process.terminate()
+                Thread.sleep(forTimeInterval: 0.25)
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
             }
             timer.resume()
             timeoutTimer = timer
@@ -1361,7 +1386,10 @@ struct SwiftPicoCommand {
         }
         process.waitUntilExit()
         timeoutTimer?.cancel()
-        if timedOut {
+        timeoutLock.lock()
+        let didTimeOut = timedOut
+        timeoutLock.unlock()
+        if didTimeOut {
             throw CLIError.message("command timed out after \(Int(timeout ?? 0)) seconds: \(command.joined(separator: " "))")
         }
         guard process.terminationStatus == 0 else { throw CLIError.message("command failed (exit \(process.terminationStatus)): \(command.joined(separator: " "))") }
