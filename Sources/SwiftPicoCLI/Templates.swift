@@ -79,7 +79,11 @@ extension SwiftPicoCommand {
             static func main() {
                 while true {
                     if let byte = Serial.read() {
-                        Serial.write(byte)
+                        if byte == 0x0A {
+                            Serial.println()
+                        } else {
+                            Serial.write(byte)
+                        }
                     } else {
                         sleepMicroseconds(100)
                     }

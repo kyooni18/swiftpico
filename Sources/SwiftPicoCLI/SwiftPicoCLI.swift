@@ -9,8 +9,8 @@ import Glibc
 @main
 struct SwiftPicoCommand {
     private static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-    private static let offlinePicoKitVersion = "0.2.9"
-    private static let releaseVersion = "0.2.11"
+    private static let offlinePicoKitVersion = "0.2.10"
+    private static let releaseVersion = "0.2.12"
 
     private static let firmwareProjectManifest = """
     cmake_minimum_required(VERSION 3.29)
@@ -573,8 +573,6 @@ struct SwiftPicoCommand {
         guard let baudValue = UInt32(baud) else {
             throw CLIError.message("Invalid serial baud rate: \(baud)")
         }
-        try configureSerialPort(device, baud: speed_t(baudValue))
-
         let restoreTerminal: (() -> Void)?
         if isatty(STDIN_FILENO) != 0 {
             let savedTerminal = try configureMonitorInput()
@@ -592,15 +590,13 @@ struct SwiftPicoCommand {
         }
         interrupt.resume()
 
-        let writer = SerialWriter()
-        // Open the write side before accepting terminal input. Otherwise a
-        // keystroke entered as soon as the monitor starts is read by the input
-        // thread while `handle` is still nil and is silently dropped.
-        try writer.open(device)
+        let connection = SerialConnection()
+        try connection.open(device, baud: speed_t(baudValue))
+        defer { connection.close() }
         let inputThread = Thread {
             while true {
                 guard let data = readMonitorInput() else { return }
-                writer.write(data)
+                connection.write(data)
             }
         }
         inputThread.qualityOfService = .userInteractive
@@ -609,22 +605,29 @@ struct SwiftPicoCommand {
         FileHandle.standardOutput.write(Data(
             "Monitoring \(device) at \(baud) baud. Type to send; press Ctrl-C to stop.\n".utf8
         ))
-        reconnect: while true {
-            let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: device))
-            while true {
-                let data = handle.availableData
-                guard !data.isEmpty else {
-                    try? handle.close()
-                    writer.close()
-                    guard arguments.contains("--reconnect") else { return }
-                    print("Serial device disconnected; waiting to reconnect…")
+        while true {
+            guard let data = connection.read() else {
+                connection.close()
+                guard arguments.contains("--reconnect") else { return }
+                print("Serial device disconnected; waiting to reconnect…")
+                while true {
                     while !FileManager.default.fileExists(atPath: device) {
                         Thread.sleep(forTimeInterval: 0.25)
                     }
-                    continue reconnect
+                    do {
+                        try connection.open(device, baud: speed_t(baudValue))
+                        break
+                    } catch {
+                        // The device node can be published before its CDC
+                        // endpoints are ready. Retry the full-duplex handle.
+                        connection.close()
+                    }
+                    Thread.sleep(forTimeInterval: 0.25)
                 }
-                FileHandle.standardOutput.write(data)
+                print("Serial device reconnected.")
+                continue
             }
+            FileHandle.standardOutput.write(data)
         }
     }
 

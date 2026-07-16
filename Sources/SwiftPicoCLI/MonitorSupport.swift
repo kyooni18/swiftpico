@@ -22,6 +22,18 @@ private func closeSerialWriter(_ descriptor: Int32) {
     #endif
 }
 
+private func configureSerialDescriptor(_ descriptor: Int32, baud: speed_t) throws {
+    var settings = termios()
+    guard tcgetattr(descriptor, &settings) == 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    cfmakeraw(&settings)
+    guard cfsetspeed(&settings, baud) == 0,
+          tcsetattr(descriptor, TCSANOW, &settings) == 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+}
+
 func configureMonitorInput() throws -> termios {
     var settings = termios()
     guard tcgetattr(STDIN_FILENO, &settings) == 0 else {
@@ -42,24 +54,6 @@ func restoreMonitorInput(_ settings: termios) {
     _ = tcsetattr(STDIN_FILENO, TCSANOW, &settings)
 }
 
-func configureSerialPort(_ path: String, baud: speed_t) throws {
-    let descriptor = openSerialWriter(path)
-    guard descriptor >= 0 else {
-        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-    }
-    defer { closeSerialWriter(descriptor) }
-
-    var settings = termios()
-    guard tcgetattr(descriptor, &settings) == 0 else {
-        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-    }
-    cfmakeraw(&settings)
-    guard cfsetspeed(&settings, baud) == 0,
-          tcsetattr(descriptor, TCSANOW, &settings) == 0 else {
-        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-    }
-}
-
 func readMonitorInput() -> Data? {
     var buffer = [UInt8](repeating: 0, count: 256)
     let count = buffer.withUnsafeMutableBytes { bytes in
@@ -73,45 +67,90 @@ func readMonitorInput() -> Data? {
     return Data(buffer.prefix(Int(count)))
 }
 
-/// Synchronizes terminal writes while a monitor replaces its device handle
-/// after a USB reconnect. Reads use a separate descriptor and cannot block it.
-final class SerialWriter: @unchecked Sendable {
+/// Owns one full-duplex serial descriptor. A macOS modem device is a byte
+/// stream, so opening separate read and write handles can split or consume
+/// traffic unpredictably across resets.
+final class SerialConnection: @unchecked Sendable {
     private let lock = NSLock()
-    private var handle: FileHandle?
+    private var descriptor: Int32 = -1
 
-    func open(_ device: String) throws {
+    func open(_ device: String, baud: speed_t) throws {
         // An ordinary open of a macOS USB modem may wait indefinitely for
         // carrier detection. Open nonblocking to acquire the descriptor, then
-        // restore ordinary blocking writes for the terminal session.
-        let descriptor = openSerialWriter(device)
-        guard descriptor >= 0 else {
+        // restore blocking I/O after configuring the same full-duplex handle.
+        let replacement = openSerialWriter(device)
+        guard replacement >= 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
-        let flags = fcntl(descriptor, F_GETFL)
-        guard flags >= 0, fcntl(descriptor, F_SETFL, flags & ~O_NONBLOCK) == 0 else {
-            let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            closeSerialWriter(descriptor)
+        do {
+            try configureSerialDescriptor(replacement, baud: baud)
+        } catch {
+            closeSerialWriter(replacement)
             throw error
         }
-        let replacement = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        let flags = fcntl(replacement, F_GETFL)
+        guard flags >= 0, fcntl(replacement, F_SETFL, flags & ~O_NONBLOCK) == 0 else {
+            let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            closeSerialWriter(replacement)
+            throw error
+        }
         lock.lock()
-        let previous = handle
-        handle = replacement
+        let previous = descriptor
+        descriptor = replacement
         lock.unlock()
-        try? previous?.close()
+        if previous >= 0 { closeSerialWriter(previous) }
     }
 
     func close() {
         lock.lock()
-        let previous = handle
-        handle = nil
+        let previous = descriptor
+        descriptor = -1
         lock.unlock()
-        try? previous?.close()
+        if previous >= 0 { closeSerialWriter(previous) }
+    }
+
+    func read() -> Data? {
+        lock.lock()
+        let current = descriptor
+        lock.unlock()
+        guard current >= 0 else { return nil }
+
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                #if os(Linux)
+                Glibc.read(current, bytes.baseAddress, bytes.count)
+                #else
+                Darwin.read(current, bytes.baseAddress, bytes.count)
+                #endif
+            }
+            if count > 0 { return Data(buffer.prefix(Int(count))) }
+            if count == 0 { return nil }
+            if errno != EINTR { return nil }
+        }
     }
 
     func write(_ data: Data) {
         lock.lock()
         defer { lock.unlock() }
-        try? handle?.write(contentsOf: data)
+        guard descriptor >= 0 else { return }
+        data.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let count: Int
+                #if os(Linux)
+                count = Glibc.write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
+                #else
+                count = Darwin.write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
+                #endif
+                if count > 0 {
+                    offset += count
+                } else if count < 0 && errno == EINTR {
+                    continue
+                } else {
+                    return
+                }
+            }
+        }
     }
 }
