@@ -9,7 +9,7 @@ import Foundation
 
 public enum SwiftPicoCommand {
   static let defaultPicoKitURL = "https://github.com/kyooni18/PicoKit.git"
-  static let offlinePicoKitVersion = "0.2.11"
+  static let offlinePicoKitVersion = "0.2.12"
   static let releaseVersion = SwiftPicoVersion.current
 
   static let firmwareProjectManifest = """
