@@ -36,13 +36,14 @@ grep -Fq 'initialize_usb_interface_at_start' "$tmp/serial/swiftpico.json"
 ! grep -Fq 'pico_enable_stdio_usb(${PICOKIT_PRODUCT} 1)' "$tmp/serial/Firmware/CMakeLists.txt"
 grep -q 'Serial.read()' "$tmp/serial/Sources/serial/main.swift"
 grep -Fq 'Serial.write(byte)' "$tmp/serial/Sources/serial/main.swift"
-grep -Fq 'Serial.println()' "$tmp/serial/Sources/serial/main.swift"
+! grep -Fq 'Serial.println()' "$tmp/serial/Sources/serial/main.swift"
 grep -q 'sleepMicroseconds(100)' "$tmp/serial/Sources/serial/main.swift"
 grep -q 'Serial.println' "$tmp/blink/Sources/blink/main.swift"
 grep -q 'BoardLED' "$tmp/blink/Sources/blink/main.swift"
 
 localKitProject="$tmp/local-kit"
-kit=$(CDPATH= cd -- "$root/../PicoKit" && pwd)
+kit=${PICOKIT_TEST_ROOT:-"$root/../PicoKit"}
+kit=$(CDPATH= cd -- "$kit" && pwd)
 "$cli" init --board pico --name LocalKit --template blink --path "$localKitProject" --skip-resolve --pico-kit-path "$kit"
 grep -Fq '.package(path: "'"$kit"'")' "$localKitProject/Package.swift"
 grep -Fq '"picoKitPath"' "$localKitProject/swiftpico.json"

@@ -67,6 +67,36 @@ func readMonitorInput() -> Data? {
     return Data(buffer.prefix(Int(count)))
 }
 
+final class SerialTrafficStats: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sentBytes = 0
+    private var receivedBytes = 0
+
+    func recordSent(_ count: Int) {
+        lock.lock()
+        sentBytes += count
+        lock.unlock()
+    }
+
+    func recordReceived(_ count: Int) {
+        lock.lock()
+        receivedBytes += count
+        lock.unlock()
+    }
+
+    var sent: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return sentBytes
+    }
+
+    var received: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return receivedBytes
+    }
+}
+
 /// Owns one full-duplex serial descriptor. A macOS modem device is a byte
 /// stream, so opening separate read and write handles can split or consume
 /// traffic unpredictably across resets.
@@ -130,10 +160,12 @@ final class SerialConnection: @unchecked Sendable {
         }
     }
 
-    func write(_ data: Data) {
+    @discardableResult
+    func write(_ data: Data) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard descriptor >= 0 else { return }
+        guard descriptor >= 0 else { return false }
+        var succeeded = true
         data.withUnsafeBytes { bytes in
             var offset = 0
             while offset < bytes.count {
@@ -148,9 +180,11 @@ final class SerialConnection: @unchecked Sendable {
                 } else if count < 0 && errno == EINTR {
                     continue
                 } else {
+                    succeeded = false
                     return
                 }
             }
         }
+        return succeeded
     }
 }

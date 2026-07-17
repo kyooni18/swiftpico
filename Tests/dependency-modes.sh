@@ -8,7 +8,9 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 export PATH="/opt/homebrew/bin:$PATH"
-export PICO_SWIFTC=${PICO_SWIFTC:-/Users/kyooni18/Library/Developer/Toolchains/swift-DEVELOPMENT-SNAPSHOT-2026-07-05-a.xctoolchain/usr/bin/swiftc}
+if [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
+    export PICO_SWIFTC=${PICO_SWIFTC:-/Users/kyooni18/Library/Developer/Toolchains/swift-DEVELOPMENT-SNAPSHOT-2026-07-05-a.xctoolchain/usr/bin/swiftc}
+fi
 swift build --package-path "$root" --product swiftpico
 cli="$root/.build/debug/swiftpico"
 
@@ -74,6 +76,8 @@ test "$first_lock" = "$(shasum -a 256 "$project/Firmware/dependencies.lock" | aw
 "$cli" dependencies resolve --context "$project/swiftpico.json"
 grep -q "$second_commit" "$project/Firmware/dependencies.lock"
 
-"$cli" build --configuration release --context "$project/swiftpico.json"
-test -f "$project/Firmware/build/DependencyModes.uf2"
+if [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
+    "$cli" build --configuration release --context "$project/swiftpico.json"
+    test -f "$project/Firmware/build/DependencyModes.uf2"
+fi
 echo "SwiftPico dependency integration modes passed"

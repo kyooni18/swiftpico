@@ -1,7 +1,7 @@
 import Foundation
 
 struct FirmwareDependencies: Codable {
-    var schemaVersion = 1
+    var schemaVersion = SwiftPicoVersion.dependencySchema
     var dependencies: [FirmwareDependency] = []
 }
 
@@ -60,8 +60,8 @@ struct FirmwareDependencyLock: Codable {
         var toolchainCompatibility: String
     }
 
-    var schemaVersion = 1
-    var generatedBy = "SwiftPico 0.2.1"
+    var schemaVersion = SwiftPicoVersion.lockSchema
+    var generatedBy = "SwiftPico \(SwiftPicoVersion.current)"
     var picoKit: PicoKitResolution
     var dependencies: [Resolution]
 }
@@ -319,7 +319,7 @@ enum DependencySupport {
     }
 
     private static func validate(_ manifest: FirmwareDependencies) throws {
-        guard manifest.schemaVersion == 1 else {
+        guard manifest.schemaVersion == SwiftPicoVersion.dependencySchema else {
             throw DependencySupportError.message("unsupported dependencies.json schemaVersion \(manifest.schemaVersion)")
         }
         var names = Set<String>()
@@ -357,13 +357,15 @@ enum DependencySupport {
                     throw DependencySupportError.message("dependency '\(dependency.name)' has a multiline CMake option")
                 }
             }
-            let sourcePaths = (dependency.sources ?? [])
-                + (dependency.headers ?? [])
-                + (dependency.includeDirectories ?? [])
-                + (dependency.configurationHeaders ?? [])
-                + [dependency.cmakeSubdirectory].compactMap { $0 }
+            var sourcePaths = dependency.sources ?? []
+            sourcePaths.append(contentsOf: dependency.headers ?? [])
+            sourcePaths.append(contentsOf: dependency.includeDirectories ?? [])
+            sourcePaths.append(contentsOf: dependency.configurationHeaders ?? [])
+            if let cmakeSubdirectory = dependency.cmakeSubdirectory {
+                sourcePaths.append(cmakeSubdirectory)
+            }
             for path in sourcePaths {
-                guard !path.hasPrefix("/"), !path.split(separator: "/").contains("..") else {
+                guard PathSafety.isSafeDependencyPath(path) else {
                     throw DependencySupportError.message("dependency '\(dependency.name)' path must stay inside its source: \(path)")
                 }
             }
@@ -555,17 +557,15 @@ enum DependencySupport {
     private static func run(_ command: [String]) throws -> String {
         let process = Process()
         let output = Pipe()
-        let errors = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = command
         process.standardOutput = output
-        process.standardError = errors
+        process.standardError = output
         try process.run()
         process.waitUntilExit()
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         guard process.terminationStatus == 0 else {
-            let error = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            throw DependencySupportError.message("command failed: \(command.joined(separator: " "))\n\(error)")
+            throw DependencySupportError.message("command failed: \(command.joined(separator: " "))\n\(text)")
         }
         return text
     }

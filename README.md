@@ -33,8 +33,8 @@ It keeps Ctrl-C for leaving the terminal and restores the local terminal mode on
 exit.
 
 The `serial` template is an exact byte echo using `Serial.read()` and raw-byte
-`Serial.write(_:)`, making it useful for both interactive bring-up and the
-automated USB hardware gate.
+`Serial.write(_:)`; it deliberately does not translate line endings. That makes
+it useful for both interactive bring-up and byte-level USB hardware checks.
 
 `init` creates a standalone Swift package pinned to one exact PicoKit release, a board-specific `swiftpico.json`, a firmware CMake entrypoint, application-owned interop files, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` to select the release explicitly, or `--skip-resolve` for an offline scaffold. Use `--pico-kit-path /path/to/PicoKit` to develop against a local checkout before a PicoKit change is released as a tag.
 

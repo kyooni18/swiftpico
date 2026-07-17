@@ -16,11 +16,13 @@ cli="$root/.build/debug/swiftpico"
 for board in pico pico_w pico2 pico2_w; do
     project="$tmp/$board"
     "$cli" init --board "$board" --name MatrixApp --template blink --path "$project" --pico-kit-path "$kit"
-    (
-        cd "$project"
+    grep -q '"schemaVersion" : 1' "$project/swiftpico.json"
+    grep -q "\"board\" : \"$board\"" "$project/swiftpico.json"
+    test -f "$project/Firmware/Generated/Dependencies.cmake"
+    if [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
         "$cli" build --configuration release --context "$project/swiftpico.json"
-    )
-    if [ "$board" = pico ]; then
+    fi
+    if [ "$board" = pico ] && [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
         state="$project/.swiftpico/firmware-build.json"
         test -f "$state"
         touch "$project/Firmware/build/stale-version-marker"
@@ -34,7 +36,10 @@ done
 for board in pico pico2_w; do
     project="$tmp/serial-$board"
     "$cli" init --board "$board" --name SerialMatrix --template serial --path "$project" --pico-kit-path "$kit"
-    "$cli" build --configuration release --context "$project/swiftpico.json"
+    grep -q 'Serial.read()' "$project/Sources/SerialMatrix/main.swift"
+    if [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
+        "$cli" build --configuration release --context "$project/swiftpico.json"
+    fi
 done
 
 echo "SwiftPico firmware matrix passed"

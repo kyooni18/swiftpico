@@ -1,2 +1,5 @@
 .build/
+.build-codex/
+.build-verify/
+.build-native-tests/
 .DS_Store

@@ -1,0 +1,64 @@
+name: Continuous Integration
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PICOKIT_TEST_ROOT: ${{ github.workspace }}/PicoKit
+  SWIFTPICO_VALIDATE_ONLY: "1"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.architecture }} / ${{ matrix.configuration }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+            configuration: debug
+          - architecture: arm64
+            runner: macos-15
+            configuration: release
+          - architecture: x86_64
+            runner: macos-15-intel
+            configuration: debug
+          - architecture: x86_64
+            runner: macos-15-intel
+            configuration: release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: kyooni18/PicoKit
+          ref: v0.2.10
+          path: PicoKit
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: "6.2.1"
+      - name: Verify host
+        run: |
+          test "$(uname -m)" = "${{ matrix.architecture }}"
+          swift --version | grep '6.2.1'
+      - name: Build
+        run: swift build --configuration "${{ matrix.configuration }}" --product swiftpico
+      - name: Unit tests
+        run: swift test --configuration "${{ matrix.configuration }}" --disable-xctest
+      - name: CLI integration
+        run: sh Tests/cli-integration.sh
+      - name: Dependency modes
+        run: sh Tests/dependency-modes.sh
+      - name: C and C++ interop fixture
+        run: sh Tests/interop-fixture.sh
+      - name: Generated firmware matrix
+        run: sh Tests/firmware-matrix.sh

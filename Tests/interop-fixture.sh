@@ -19,6 +19,12 @@ mkdir -p "$project/Firmware/Interop/Modules/MockLCD"
 cp -R "$root/Tests/Fixtures/Interop/." "$project/Firmware/Interop/"
 cp "$root/Tests/Fixtures/InteropMain.swift" "$project/Sources/InteropFixture/main.swift"
 
-"$cli" build --configuration release --context "$project/swiftpico.json"
-test -f "$project/Firmware/build/InteropFixture.uf2"
+if [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
+    "$cli" build --configuration release --context "$project/swiftpico.json"
+    test -f "$project/Firmware/build/InteropFixture.uf2"
+else
+    test -f "$project/Firmware/Interop/AppInterop.c"
+    test -f "$project/Firmware/Interop/CppAdapter.cpp"
+    grep -q 'import MockLCD' "$project/Sources/InteropFixture/main.swift"
+fi
 echo "SwiftPico application interop fixture passed"

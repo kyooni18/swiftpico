@@ -1,0 +1,3 @@
+import SwiftPicoCore
+
+SwiftPicoCommand.main()
