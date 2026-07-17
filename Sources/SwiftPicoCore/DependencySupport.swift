@@ -1,610 +1,717 @@
 import Foundation
 
 struct FirmwareDependencies: Codable {
-    var schemaVersion = SwiftPicoVersion.dependencySchema
-    var dependencies: [FirmwareDependency] = []
+  var schemaVersion = SwiftPicoVersion.dependencySchema
+  var dependencies: [FirmwareDependency] = []
 }
 
 struct FirmwareDependency: Codable {
-    enum Language: String, Codable { case c, cpp, swift }
-    enum Integration: String, Codable { case cmakeTarget, sources, headerOnly, swiftSources }
-    enum SourceType: String, Codable { case git, local, archive }
+  enum Language: String, Codable { case c, cpp, swift }
+  enum Integration: String, Codable { case cmakeTarget, sources, headerOnly, swiftSources }
+  enum SourceType: String, Codable { case git, local, archive }
 
-    struct Module: Codable {
-        var name: String
-        var umbrellaHeader: String
-    }
-
+  struct Module: Codable {
     var name: String
-    var language: Language
-    var sourceType: String?
-    var repositoryURL: String
-    var revision: String
-    var archiveSHA256: String?
-    var integration: Integration
-    var target: String?
-    var cmakeSubdirectory: String?
-    var package: String?
-    var product: String?
-    var sources: [String]?
-    var headers: [String]?
-    var configurationHeaders: [String]?
-    var includeDirectories: [String]?
-    var compileDefinitions: [String]?
-    var compileOptions: [String]?
-    var cmakeOptions: [String: String]?
-    var boards: [String]?
-    var adapters: [String]?
-    var module: Module?
-    var resources: [String]?
+    var umbrellaHeader: String
+  }
+
+  var name: String
+  var language: Language
+  var sourceType: String?
+  var repositoryURL: String
+  var revision: String
+  var archiveSHA256: String?
+  var integration: Integration
+  var target: String?
+  var cmakeSubdirectory: String?
+  var package: String?
+  var product: String?
+  var sources: [String]?
+  var headers: [String]?
+  var configurationHeaders: [String]?
+  var includeDirectories: [String]?
+  var compileDefinitions: [String]?
+  var compileOptions: [String]?
+  var cmakeOptions: [String: String]?
+  var boards: [String]?
+  var adapters: [String]?
+  var module: Module?
+  var resources: [String]?
 }
 
 struct FirmwareDependencyLock: Codable {
-    struct PicoKitResolution: Codable {
-        var repositoryURL: String
-        var requestedVersion: String
-        var exactCommit: String
-        var local: Bool
-        var dirty: Bool
-    }
+  struct PicoKitResolution: Codable {
+    var repositoryURL: String
+    var requestedVersion: String
+    var exactCommit: String
+    var local: Bool
+    var dirty: Bool
+  }
 
-    struct Resolution: Codable {
-        var name: String
-        var repositoryURL: String
-        var requestedRevision: String
-        var resolvedTag: String?
-        var exactCommit: String
-        var sourceType: String?
-        var archiveSHA256: String?
-        var integration: FirmwareDependency.Integration
-        var toolchainCompatibility: String
-    }
+  struct Resolution: Codable {
+    var name: String
+    var repositoryURL: String
+    var requestedRevision: String
+    var resolvedTag: String?
+    var exactCommit: String
+    var sourceType: String?
+    var archiveSHA256: String?
+    var integration: FirmwareDependency.Integration
+    var toolchainCompatibility: String
+  }
 
-    var schemaVersion = SwiftPicoVersion.lockSchema
-    var generatedBy = "SwiftPico \(SwiftPicoVersion.current)"
-    var picoKit: PicoKitResolution
-    var dependencies: [Resolution]
+  var schemaVersion = SwiftPicoVersion.lockSchema
+  var generatedBy = "SwiftPico \(SwiftPicoVersion.current)"
+  var picoKit: PicoKitResolution
+  var dependencies: [Resolution]
 }
 
 enum DependencySupportError: LocalizedError {
-    case message(String)
-    var errorDescription: String? {
-        switch self { case .message(let value): value }
+  case message(String)
+  var errorDescription: String? {
+    switch self {
+    case .message(let value): value
     }
+  }
 }
 
 enum DependencySupport {
-    static let manifestPath = "Firmware/dependencies.json"
-    static let lockPath = "Firmware/dependencies.lock"
-    static let generatedPath = "Firmware/Generated/Dependencies.cmake"
+  static let manifestPath = "Firmware/dependencies.json"
+  static let lockPath = "Firmware/dependencies.lock"
+  static let generatedPath = "Firmware/Generated/Dependencies.cmake"
 
-    static func initializeProject(at root: URL) throws {
-        let manager = FileManager.default
-        let firmware = root.appendingPathComponent("Firmware", isDirectory: true)
-        let interop = firmware.appendingPathComponent("Interop", isDirectory: true)
-        let modules = interop.appendingPathComponent("Modules", isDirectory: true)
-        let generated = firmware.appendingPathComponent("Generated", isDirectory: true)
-        try manager.createDirectory(at: modules, withIntermediateDirectories: true)
-        try manager.createDirectory(at: generated, withIntermediateDirectories: true)
+  static func initializeProject(at root: URL) throws {
+    let manager = FileManager.default
+    let firmware = root.appendingPathComponent("Firmware", isDirectory: true)
+    let interop = firmware.appendingPathComponent("Interop", isDirectory: true)
+    let modules = interop.appendingPathComponent("Modules", isDirectory: true)
+    let generated = firmware.appendingPathComponent("Generated", isDirectory: true)
+    try manager.createDirectory(at: modules, withIntermediateDirectories: true)
+    try manager.createDirectory(at: generated, withIntermediateDirectories: true)
 
-        try writeIfMissing(
-            FirmwareDependencies(),
-            to: root.appendingPathComponent(manifestPath)
-        )
-        try writeTextIfMissing(
-            """
-            #pragma once
+    try writeIfMissing(
+      FirmwareDependencies(),
+      to: root.appendingPathComponent(manifestPath)
+    )
+    try writeTextIfMissing(
+      """
+      #pragma once
 
-            #include "Callbacks.h"
-            """ + "\n",
-            to: interop.appendingPathComponent("AppInterop.h")
-        )
-        try writeTextIfMissing(
-            """
-            #pragma once
+      #include "Callbacks.h"
+      """ + "\n",
+      to: interop.appendingPathComponent("AppInterop.h")
+    )
+    try writeTextIfMissing(
+      """
+      #pragma once
 
-            // Declare application-owned C-to-Swift callbacks here using only
-            // fixed-width C types, pointers, lengths, and opaque handles.
-            """ + "\n",
-            to: interop.appendingPathComponent("Callbacks.h")
-        )
-        try writeTextIfMissing(
-            """
-            #include "AppInterop.h"
+      // Declare application-owned C-to-Swift callbacks here using only
+      // fixed-width C types, pointers, lengths, and opaque handles.
+      """ + "\n",
+      to: interop.appendingPathComponent("Callbacks.h")
+    )
+    try writeTextIfMissing(
+      """
+      #include "AppInterop.h"
 
-            // Application-owned C adapters belong here. PicoKit internals do not
-            // include this file or any third-party library header.
-            """ + "\n",
-            to: interop.appendingPathComponent("AppInterop.c")
-        )
-        try writeTextIfMissing(
-            """
-            # Local-only CMake overrides. Keep this file out of version control.
-            """ + "\n",
-            to: firmware.appendingPathComponent("Dependencies.local.cmake")
-        )
-        try writeTextIfMissing(
-            """
-            # Generated by swiftpico dependencies resolve. Do not edit.
-            set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
-            """ + "\n",
-            to: root.appendingPathComponent(generatedPath)
-        )
+      // Application-owned C adapters belong here. PicoKit internals do not
+      // include this file or any third-party library header.
+      """ + "\n",
+      to: interop.appendingPathComponent("AppInterop.c")
+    )
+    try writeTextIfMissing(
+      """
+      # Local-only CMake overrides. Keep this file out of version control.
+      """ + "\n",
+      to: firmware.appendingPathComponent("Dependencies.local.cmake")
+    )
+    try writeTextIfMissing(
+      """
+      # Generated by swiftpico dependencies resolve. Do not edit.
+      set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+      """ + "\n",
+      to: root.appendingPathComponent(generatedPath)
+    )
+  }
+
+  static func addCMakeDependency(
+    root: URL,
+    name: String,
+    language: FirmwareDependency.Language,
+    url: String,
+    revision: String,
+    target: String
+  ) throws {
+    var manifest = try loadManifest(root: root)
+    try ensureUnique(name: name, target: target, module: nil, resources: [], in: manifest)
+    manifest.dependencies.append(
+      FirmwareDependency(
+        name: name,
+        language: language,
+        repositoryURL: url,
+        revision: revision,
+        integration: .cmakeTarget,
+        target: target
+      ))
+    try write(manifest, to: root.appendingPathComponent(manifestPath))
+  }
+
+  static func addSwiftDependency(
+    root: URL,
+    name: String,
+    url: String,
+    revision: String,
+    package: String,
+    product: String,
+    target: String
+  ) throws {
+    var manifest = try loadManifest(root: root)
+    try ensureUnique(name: name, target: product, module: nil, resources: [], in: manifest)
+    manifest.dependencies.append(
+      FirmwareDependency(
+        name: name,
+        language: .swift,
+        repositoryURL: url,
+        revision: revision,
+        integration: .swiftSources,
+        target: target,
+        package: package,
+        product: product
+      ))
+    try write(manifest, to: root.appendingPathComponent(manifestPath))
+  }
+
+  static func remove(root: URL, name: String) throws -> FirmwareDependency {
+    var manifest = try loadManifest(root: root)
+    guard let removed = manifest.dependencies.first(where: { $0.name == name }) else {
+      throw DependencySupportError.message("dependency '\(name)' was not found")
+    }
+    manifest.dependencies.removeAll { $0.name == name }
+    try write(manifest, to: root.appendingPathComponent(manifestPath))
+    try? FileManager.default.removeItem(at: root.appendingPathComponent(lockPath))
+    try? FileManager.default.removeItem(at: root.appendingPathComponent(generatedPath))
+    return removed
+  }
+
+  static func update(root: URL, name: String, revision: String) throws -> FirmwareDependency {
+    var manifest = try loadManifest(root: root)
+    guard let index = manifest.dependencies.firstIndex(where: { $0.name == name }) else {
+      throw DependencySupportError.message("dependency '\(name)' was not found")
+    }
+    let old = manifest.dependencies[index]
+    manifest.dependencies[index].revision = revision
+    try write(manifest, to: root.appendingPathComponent(manifestPath))
+    try? FileManager.default.removeItem(at: root.appendingPathComponent(lockPath))
+    try? FileManager.default.removeItem(at: root.appendingPathComponent(generatedPath))
+    return old
+  }
+
+  static func resolve(
+    root: URL,
+    picoKitURL: String,
+    picoKitVersion: String,
+    picoKitPath: String?
+  ) throws -> FirmwareDependencyLock {
+    let manifest = try loadManifest(root: root)
+    try validate(manifest)
+    let picoKitProgress = picoKitPath == nil ? "v\(picoKitVersion)" : "from local checkout"
+    print("  Resolving PicoKit revision \(picoKitProgress)…")
+    let toolchain = try firstLine(run(["swiftc", "--version"]))
+    let picoResolution: FirmwareDependencyLock.PicoKitResolution
+    if let picoKitPath {
+      let path = URL(fileURLWithPath: picoKitPath, relativeTo: root).standardizedFileURL.path
+      let commit = try firstLine(run(["git", "-C", path, "rev-parse", "HEAD"]))
+      let dirty = !((try? run(["git", "-C", path, "status", "--porcelain"])) ?? "").isEmpty
+      picoResolution = .init(
+        repositoryURL: path,
+        requestedVersion: picoKitVersion,
+        exactCommit: commit,
+        local: true,
+        dirty: dirty
+      )
+    } else {
+      picoResolution = .init(
+        repositoryURL: picoKitURL,
+        requestedVersion: picoKitVersion,
+        exactCommit: try resolveRevision(url: picoKitURL, revision: "v\(picoKitVersion)"),
+        local: false,
+        dirty: false
+      )
     }
 
-    static func addCMakeDependency(
-        root: URL,
-        name: String,
-        language: FirmwareDependency.Language,
-        url: String,
-        revision: String,
-        target: String
-    ) throws {
-        var manifest = try loadManifest(root: root)
-        try ensureUnique(name: name, target: target, module: nil, resources: [], in: manifest)
-        manifest.dependencies.append(FirmwareDependency(
-            name: name,
-            language: language,
-            repositoryURL: url,
-            revision: revision,
-            integration: .cmakeTarget,
-            target: target
-        ))
-        try write(manifest, to: root.appendingPathComponent(manifestPath))
-    }
-
-    static func addSwiftDependency(
-        root: URL,
-        name: String,
-        url: String,
-        revision: String,
-        package: String,
-        product: String,
-        target: String
-    ) throws {
-        var manifest = try loadManifest(root: root)
-        try ensureUnique(name: name, target: product, module: nil, resources: [], in: manifest)
-        manifest.dependencies.append(FirmwareDependency(
-            name: name,
-            language: .swift,
-            repositoryURL: url,
-            revision: revision,
-            integration: .swiftSources,
-            target: target,
-            package: package,
-            product: product
-        ))
-        try write(manifest, to: root.appendingPathComponent(manifestPath))
-    }
-
-    static func remove(root: URL, name: String) throws -> FirmwareDependency {
-        var manifest = try loadManifest(root: root)
-        guard let removed = manifest.dependencies.first(where: { $0.name == name }) else {
-            throw DependencySupportError.message("dependency '\(name)' was not found")
+    var resolutions: [FirmwareDependencyLock.Resolution] = []
+    for dependency in manifest.dependencies.sorted(by: { $0.name < $1.name }) {
+      let sourceType = try sourceType(of: dependency)
+      print("  Resolving \(dependency.name) [\(sourceType.rawValue)] @ \(dependency.revision)…")
+      let sourceURL: String
+      let exactCommit: String
+      switch sourceType {
+      case .git:
+        sourceURL = dependency.repositoryURL
+        exactCommit = try resolveRevision(
+          url: dependency.repositoryURL, revision: dependency.revision)
+      case .local:
+        let local = try resolveLocalSource(dependency.repositoryURL, relativeTo: root)
+        sourceURL = local.path
+        exactCommit =
+          (try? firstLine(run(["git", "-C", local.path, "rev-parse", "HEAD"])))
+          ?? "local-unversioned"
+      case .archive:
+        guard let sha256 = dependency.archiveSHA256?.lowercased(),
+          sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
+        else {
+          throw DependencySupportError.message(
+            "archive dependency '\(dependency.name)' requires a 64-character archiveSHA256")
         }
-        manifest.dependencies.removeAll { $0.name == name }
-        try write(manifest, to: root.appendingPathComponent(manifestPath))
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(lockPath))
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(generatedPath))
-        return removed
+        sourceURL = dependency.repositoryURL
+        exactCommit = sha256
+      }
+      resolutions.append(
+        .init(
+          name: dependency.name,
+          repositoryURL: sourceURL,
+          requestedRevision: dependency.revision,
+          resolvedTag: sourceType == .git
+            && dependency.revision.range(of: "^[0-9a-fA-F]{40}$", options: .regularExpression)
+              == nil
+            ? dependency.revision : nil,
+          exactCommit: exactCommit,
+          sourceType: sourceType.rawValue,
+          archiveSHA256: dependency.archiveSHA256?.lowercased(),
+          integration: dependency.integration,
+          toolchainCompatibility: toolchain
+        ))
     }
+    let lock = FirmwareDependencyLock(picoKit: picoResolution, dependencies: resolutions)
+    print("  Writing \(lockPath)…")
+    try write(lock, to: root.appendingPathComponent(lockPath))
+    print("  Generating \(generatedPath)…")
+    try generate(root: root, manifest: manifest, lock: lock)
+    return lock
+  }
 
-    static func update(root: URL, name: String, revision: String) throws -> FirmwareDependency {
-        var manifest = try loadManifest(root: root)
-        guard let index = manifest.dependencies.firstIndex(where: { $0.name == name }) else {
-            throw DependencySupportError.message("dependency '\(name)' was not found")
+  static func generateFromLock(root: URL) throws {
+    let manifest = try loadManifest(root: root)
+    let lock: FirmwareDependencyLock = try load(root.appendingPathComponent(lockPath))
+    try validate(manifest)
+    guard Set(manifest.dependencies.map(\.name)) == Set(lock.dependencies.map(\.name)) else {
+      throw DependencySupportError.message(
+        "dependencies.lock is stale; run 'swiftpico dependencies resolve'")
+    }
+    for dependency in manifest.dependencies {
+      guard let resolution = lock.dependencies.first(where: { $0.name == dependency.name }),
+        resolution.requestedRevision == dependency.revision,
+        resolution.integration == dependency.integration,
+        (resolution.sourceType ?? FirmwareDependency.SourceType.git.rawValue)
+          == (try sourceType(of: dependency)).rawValue,
+        resolution.archiveSHA256 == dependency.archiveSHA256?.lowercased()
+      else {
+        throw DependencySupportError.message(
+          "dependencies.lock is stale for '\(dependency.name)'; run 'swiftpico dependencies resolve'"
+        )
+      }
+      if try sourceType(of: dependency) == .local {
+        let currentPath = try resolveLocalSource(dependency.repositoryURL, relativeTo: root).path
+        guard resolution.repositoryURL == currentPath else {
+          throw DependencySupportError.message(
+            "dependencies.lock is stale for local dependency '\(dependency.name)'; run 'swiftpico dependencies resolve'"
+          )
         }
-        let old = manifest.dependencies[index]
-        manifest.dependencies[index].revision = revision
-        try write(manifest, to: root.appendingPathComponent(manifestPath))
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(lockPath))
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(generatedPath))
-        return old
+      }
     }
+    try generate(root: root, manifest: manifest, lock: lock)
+  }
 
-    static func resolve(
-        root: URL,
-        picoKitURL: String,
-        picoKitVersion: String,
-        picoKitPath: String?
-    ) throws -> FirmwareDependencyLock {
-        let manifest = try loadManifest(root: root)
-        try validate(manifest)
-        let picoKitProgress = picoKitPath == nil ? "v\(picoKitVersion)" : "from local checkout"
-        print("  Resolving PicoKit revision \(picoKitProgress)…")
-        let toolchain = try firstLine(run(["swiftc", "--version"]))
-        let picoResolution: FirmwareDependencyLock.PicoKitResolution
-        if let picoKitPath {
-            let path = URL(fileURLWithPath: picoKitPath, relativeTo: root).standardizedFileURL.path
-            let commit = try firstLine(run(["git", "-C", path, "rev-parse", "HEAD"]))
-            let dirty = !((try? run(["git", "-C", path, "status", "--porcelain"])) ?? "").isEmpty
-            picoResolution = .init(
-                repositoryURL: path,
-                requestedVersion: picoKitVersion,
-                exactCommit: commit,
-                local: true,
-                dirty: dirty
-            )
+  static func migrate(root: URL) throws {
+    try initializeProject(at: root)
+    let legacy = root.appendingPathComponent("Firmware/Dependencies.cmake")
+    if FileManager.default.fileExists(atPath: legacy.path) {
+      print(
+        "Preserved legacy Firmware/Dependencies.cmake; migrate its entries individually, then remove it when the generated build matches."
+      )
+    }
+  }
+
+  static func loadManifest(root: URL) throws -> FirmwareDependencies {
+    let url = root.appendingPathComponent(manifestPath)
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      throw DependencySupportError.message(
+        "\(manifestPath) is missing; run 'swiftpico dependencies migrate'")
+    }
+    return try load(url)
+  }
+
+  private static func validate(_ manifest: FirmwareDependencies) throws {
+    guard manifest.schemaVersion == SwiftPicoVersion.dependencySchema else {
+      throw DependencySupportError.message(
+        "unsupported dependencies.json schemaVersion \(manifest.schemaVersion)")
+    }
+    var names = Set<String>()
+    var cmakeNames = Set<String>()
+    var targets = Set<String>()
+    var modules = Set<String>()
+    var resources = Set<String>()
+    for dependency in manifest.dependencies {
+      guard names.insert(dependency.name).inserted else {
+        throw DependencySupportError.message("duplicate dependency name '\(dependency.name)'")
+      }
+      guard cmakeNames.insert(cmakeIdentifier(dependency.name)).inserted else {
+        throw DependencySupportError.message(
+          "dependency names collide after CMake normalization at '\(dependency.name)'")
+      }
+      if let target = dependency.target, !targets.insert(target).inserted {
+        throw DependencySupportError.message("duplicate dependency target '\(target)'")
+      }
+      if let target = dependency.target {
+        let targetPattern =
+          dependency.integration == .cmakeTarget
+          ? "^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*$"
+          : "^[A-Za-z_][A-Za-z0-9_]*$"
+        guard target.range(of: targetPattern, options: .regularExpression) != nil else {
+          throw DependencySupportError.message("invalid CMake target '\(target)'")
+        }
+        guard target != "PicoKit", target != "PicoKitSDKBridge" else {
+          throw DependencySupportError.message(
+            "dependency target '\(target)' conflicts with PicoKit")
+        }
+      }
+      if let module = dependency.module?.name {
+        guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
+        else { throw DependencySupportError.message("invalid Clang module name '\(module)'") }
+        guard modules.insert(module).inserted else {
+          throw DependencySupportError.message("duplicate Clang module '\(module)'")
+        }
+      }
+      for resource in dependency.resources ?? [] where !resources.insert(resource).inserted {
+        throw DependencySupportError.message("resource ownership conflict for '\(resource)'")
+      }
+      guard !dependency.repositoryURL.isEmpty, !dependency.revision.isEmpty else {
+        throw DependencySupportError.message(
+          "dependency '\(dependency.name)' requires repositoryURL and revision")
+      }
+      _ = try sourceType(of: dependency)
+      if let options = dependency.cmakeOptions {
+        for key in options.keys
+        where key.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) == nil {
+          throw DependencySupportError.message(
+            "dependency '\(dependency.name)' has invalid CMake option '\(key)'")
+        }
+        for value in options.values where value.contains("\n") || value.contains("\r") {
+          throw DependencySupportError.message(
+            "dependency '\(dependency.name)' has a multiline CMake option")
+        }
+      }
+      var sourcePaths = dependency.sources ?? []
+      sourcePaths.append(contentsOf: dependency.headers ?? [])
+      sourcePaths.append(contentsOf: dependency.includeDirectories ?? [])
+      sourcePaths.append(contentsOf: dependency.configurationHeaders ?? [])
+      if let cmakeSubdirectory = dependency.cmakeSubdirectory {
+        sourcePaths.append(cmakeSubdirectory)
+      }
+      for path in sourcePaths {
+        guard PathSafety.isSafeDependencyPath(path) else {
+          throw DependencySupportError.message(
+            "dependency '\(dependency.name)' path must stay inside its source: \(path)")
+        }
+      }
+      for board in dependency.boards ?? []
+      where !["pico", "pico_w", "pico2", "pico2_w"].contains(board) {
+        throw DependencySupportError.message(
+          "dependency '\(dependency.name)' has unsupported board '\(board)'")
+      }
+    }
+  }
+
+  private static func ensureUnique(
+    name: String,
+    target: String?,
+    module: String?,
+    resources: [String],
+    in manifest: FirmwareDependencies
+  ) throws {
+    if manifest.dependencies.contains(where: { $0.name == name }) {
+      throw DependencySupportError.message("dependency '\(name)' already exists")
+    }
+    if let target, manifest.dependencies.contains(where: { $0.target == target }) {
+      throw DependencySupportError.message("dependency target '\(target)' already exists")
+    }
+    if let module, manifest.dependencies.contains(where: { $0.module?.name == module }) {
+      throw DependencySupportError.message("Clang module '\(module)' already exists")
+    }
+    let owned = Set(manifest.dependencies.flatMap { $0.resources ?? [] })
+    if let conflict = resources.first(where: owned.contains) {
+      throw DependencySupportError.message("resource ownership conflict for '\(conflict)'")
+    }
+  }
+
+  private static func generate(
+    root: URL,
+    manifest: FirmwareDependencies,
+    lock: FirmwareDependencyLock
+  ) throws {
+    var output = """
+      # Generated by swiftpico dependencies resolve. Do not edit.
+      include(FetchContent)
+      set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+
+      """
+    for dependency in manifest.dependencies.sorted(by: { $0.name < $1.name }) {
+      guard let resolution = lock.dependencies.first(where: { $0.name == dependency.name }) else {
+        throw DependencySupportError.message(
+          "dependencies.lock has no entry for '\(dependency.name)'")
+      }
+      let identifier = cmakeIdentifier(dependency.name)
+      let condition: String
+      if let boards = dependency.boards, !boards.isEmpty {
+        condition =
+          "if(PICO_BOARD IN_LIST _swiftpico_\(identifier)_boards)\n  set(_swiftpico_\(identifier)_boards \(boards.joined(separator: " ")))"
+      } else {
+        condition = ""
+      }
+      if !condition.isEmpty {
+        output +=
+          "set(_swiftpico_\(identifier)_boards \(dependency.boards!.joined(separator: " ")))\nif(PICO_BOARD IN_LIST _swiftpico_\(identifier)_boards)\n"
+      }
+      if dependency.integration != .swiftSources {
+        let sourceSubdirectory: String
+        if dependency.integration == .cmakeTarget {
+          sourceSubdirectory =
+            dependency.cmakeSubdirectory.map { " SOURCE_SUBDIR \"\(cmakeEscape($0))\"" } ?? ""
         } else {
-            picoResolution = .init(
-                repositoryURL: picoKitURL,
-                requestedVersion: picoKitVersion,
-                exactCommit: try resolveRevision(url: picoKitURL, revision: "v\(picoKitVersion)"),
-                local: false,
-                dirty: false
-            )
+          sourceSubdirectory = " SOURCE_SUBDIR __swiftpico_no_cmake_project__"
         }
-
-        var resolutions: [FirmwareDependencyLock.Resolution] = []
-        for dependency in manifest.dependencies.sorted(by: { $0.name < $1.name }) {
-            let sourceType = try sourceType(of: dependency)
-            print("  Resolving \(dependency.name) [\(sourceType.rawValue)] @ \(dependency.revision)…")
-            let sourceURL: String
-            let exactCommit: String
-            switch sourceType {
-            case .git:
-                sourceURL = dependency.repositoryURL
-                exactCommit = try resolveRevision(url: dependency.repositoryURL, revision: dependency.revision)
-            case .local:
-                let local = try resolveLocalSource(dependency.repositoryURL, relativeTo: root)
-                sourceURL = local.path
-                exactCommit = (try? firstLine(run(["git", "-C", local.path, "rev-parse", "HEAD"]))) ?? "local-unversioned"
-            case .archive:
-                guard let sha256 = dependency.archiveSHA256?.lowercased(),
-                      sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
-                    throw DependencySupportError.message("archive dependency '\(dependency.name)' requires a 64-character archiveSHA256")
-                }
-                sourceURL = dependency.repositoryURL
-                exactCommit = sha256
-            }
-            resolutions.append(.init(
-                name: dependency.name,
-                repositoryURL: sourceURL,
-                requestedRevision: dependency.revision,
-                resolvedTag: sourceType == .git && dependency.revision.range(of: "^[0-9a-fA-F]{40}$", options: .regularExpression) == nil ? dependency.revision : nil,
-                exactCommit: exactCommit,
-                sourceType: sourceType.rawValue,
-                archiveSHA256: dependency.archiveSHA256?.lowercased(),
-                integration: dependency.integration,
-                toolchainCompatibility: toolchain
-            ))
+        switch resolution.sourceType ?? FirmwareDependency.SourceType.git.rawValue {
+        case FirmwareDependency.SourceType.git.rawValue:
+          output +=
+            "FetchContent_Declare(\(identifier) GIT_REPOSITORY \"\(cmakeEscape(resolution.repositoryURL))\" GIT_TAG \(resolution.exactCommit) GIT_SHALLOW FALSE\(sourceSubdirectory))\n"
+        case FirmwareDependency.SourceType.local.rawValue:
+          output +=
+            "FetchContent_Declare(\(identifier) SOURCE_DIR \"\(cmakeEscape(resolution.repositoryURL))\"\(sourceSubdirectory))\n"
+        case FirmwareDependency.SourceType.archive.rawValue:
+          guard let sha256 = resolution.archiveSHA256 else {
+            throw DependencySupportError.message(
+              "dependencies.lock has no archiveSHA256 for '\(dependency.name)'")
+          }
+          output +=
+            "FetchContent_Declare(\(identifier) URL \"\(cmakeEscape(resolution.repositoryURL))\" URL_HASH SHA256=\(sha256)\(sourceSubdirectory))\n"
+        default:
+          throw DependencySupportError.message(
+            "dependencies.lock has unsupported source type for '\(dependency.name)'")
         }
-        let lock = FirmwareDependencyLock(picoKit: picoResolution, dependencies: resolutions)
-        print("  Writing \(lockPath)…")
-        try write(lock, to: root.appendingPathComponent(lockPath))
-        print("  Generating \(generatedPath)…")
-        try generate(root: root, manifest: manifest, lock: lock)
-        return lock
-    }
-
-    static func generateFromLock(root: URL) throws {
-        let manifest = try loadManifest(root: root)
-        let lock: FirmwareDependencyLock = try load(root.appendingPathComponent(lockPath))
-        try validate(manifest)
-        guard Set(manifest.dependencies.map(\.name)) == Set(lock.dependencies.map(\.name)) else {
-            throw DependencySupportError.message("dependencies.lock is stale; run 'swiftpico dependencies resolve'")
+        appendCMakeOptions(dependency, to: &output)
+      }
+      switch dependency.integration {
+      case .cmakeTarget:
+        guard let target = dependency.target else {
+          throw DependencySupportError.message("\(dependency.name) requires target")
         }
-        for dependency in manifest.dependencies {
-            guard let resolution = lock.dependencies.first(where: { $0.name == dependency.name }),
-                  resolution.requestedRevision == dependency.revision,
-                  resolution.integration == dependency.integration,
-                  (resolution.sourceType ?? FirmwareDependency.SourceType.git.rawValue) == (try sourceType(of: dependency)).rawValue,
-                  resolution.archiveSHA256 == dependency.archiveSHA256?.lowercased() else {
-                throw DependencySupportError.message("dependencies.lock is stale for '\(dependency.name)'; run 'swiftpico dependencies resolve'")
-            }
-            if try sourceType(of: dependency) == .local {
-                let currentPath = try resolveLocalSource(dependency.repositoryURL, relativeTo: root).path
-                guard resolution.repositoryURL == currentPath else {
-                    throw DependencySupportError.message("dependencies.lock is stale for local dependency '\(dependency.name)'; run 'swiftpico dependencies resolve'")
-                }
-            }
+        output += "FetchContent_MakeAvailable(\(identifier))\n"
+        appendTargetSettings(dependency, target: target, to: &output)
+        output += "target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(target))\n"
+      case .swiftSources:
+        guard let target = dependency.target, let product = dependency.product,
+          let package = dependency.package
+        else {
+          throw DependencySupportError.message(
+            "\(dependency.name) requires package, product, and target")
         }
-        try generate(root: root, manifest: manifest, lock: lock)
-    }
-
-    static func migrate(root: URL) throws {
-        try initializeProject(at: root)
-        let legacy = root.appendingPathComponent("Firmware/Dependencies.cmake")
-        if FileManager.default.fileExists(atPath: legacy.path) {
-            print("Preserved legacy Firmware/Dependencies.cmake; migrate its entries individually, then remove it when the generated build matches.")
+        output +=
+          "picokit_add_swift_library(\(product) SOURCE_DIR \"${CMAKE_CURRENT_LIST_DIR}/../../.build/checkouts/\(package)/Sources/\(target)\")\n"
+        output += "target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(product))\n"
+      case .sources:
+        let target = dependency.target ?? identifier
+        let sources = dependency.sources ?? []
+        guard !sources.isEmpty else {
+          throw DependencySupportError.message(
+            "\(dependency.name) source integration requires sources")
         }
-    }
-
-    static func loadManifest(root: URL) throws -> FirmwareDependencies {
-        let url = root.appendingPathComponent(manifestPath)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw DependencySupportError.message("\(manifestPath) is missing; run 'swiftpico dependencies migrate'")
+        output += "FetchContent_MakeAvailable(\(identifier))\n"
+        let language = dependency.language == .cpp ? "CXX" : "C"
+        output += "add_library(\(target) STATIC\n"
+        for source in sources {
+          output += "  \"${\(identifier)_SOURCE_DIR}/\(cmakeEscape(source))\"\n"
         }
-        return try load(url)
-    }
-
-    private static func validate(_ manifest: FirmwareDependencies) throws {
-        guard manifest.schemaVersion == SwiftPicoVersion.dependencySchema else {
-            throw DependencySupportError.message("unsupported dependencies.json schemaVersion \(manifest.schemaVersion)")
+        output += ")\nset_target_properties(\(target) PROPERTIES LINKER_LANGUAGE \(language))\n"
+        appendTargetSettings(dependency, target: target, to: &output)
+        if dependency.language == .cpp {
+          output += "target_compile_options(\(target) PRIVATE -fno-exceptions -fno-rtti)\n"
         }
-        var names = Set<String>()
-        var cmakeNames = Set<String>()
-        var targets = Set<String>()
-        var modules = Set<String>()
-        var resources = Set<String>()
-        for dependency in manifest.dependencies {
-            guard names.insert(dependency.name).inserted else { throw DependencySupportError.message("duplicate dependency name '\(dependency.name)'") }
-            guard cmakeNames.insert(cmakeIdentifier(dependency.name)).inserted else { throw DependencySupportError.message("dependency names collide after CMake normalization at '\(dependency.name)'") }
-            if let target = dependency.target, !targets.insert(target).inserted { throw DependencySupportError.message("duplicate dependency target '\(target)'") }
-            if let target = dependency.target {
-                let targetPattern = dependency.integration == .cmakeTarget
-                    ? "^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*$"
-                    : "^[A-Za-z_][A-Za-z0-9_]*$"
-                guard target.range(of: targetPattern, options: .regularExpression) != nil else { throw DependencySupportError.message("invalid CMake target '\(target)'") }
-                guard target != "PicoKit", target != "PicoKitSDKBridge" else { throw DependencySupportError.message("dependency target '\(target)' conflicts with PicoKit") }
-            }
-            if let module = dependency.module?.name {
-                guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else { throw DependencySupportError.message("invalid Clang module name '\(module)'") }
-                guard modules.insert(module).inserted else { throw DependencySupportError.message("duplicate Clang module '\(module)'") }
-            }
-            for resource in dependency.resources ?? [] where !resources.insert(resource).inserted {
-                throw DependencySupportError.message("resource ownership conflict for '\(resource)'")
-            }
-            guard !dependency.repositoryURL.isEmpty, !dependency.revision.isEmpty else {
-                throw DependencySupportError.message("dependency '\(dependency.name)' requires repositoryURL and revision")
-            }
-            _ = try sourceType(of: dependency)
-            if let options = dependency.cmakeOptions {
-                for key in options.keys where key.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) == nil {
-                    throw DependencySupportError.message("dependency '\(dependency.name)' has invalid CMake option '\(key)'")
-                }
-                for value in options.values where value.contains("\n") || value.contains("\r") {
-                    throw DependencySupportError.message("dependency '\(dependency.name)' has a multiline CMake option")
-                }
-            }
-            var sourcePaths = dependency.sources ?? []
-            sourcePaths.append(contentsOf: dependency.headers ?? [])
-            sourcePaths.append(contentsOf: dependency.includeDirectories ?? [])
-            sourcePaths.append(contentsOf: dependency.configurationHeaders ?? [])
-            if let cmakeSubdirectory = dependency.cmakeSubdirectory {
-                sourcePaths.append(cmakeSubdirectory)
-            }
-            for path in sourcePaths {
-                guard PathSafety.isSafeDependencyPath(path) else {
-                    throw DependencySupportError.message("dependency '\(dependency.name)' path must stay inside its source: \(path)")
-                }
-            }
-            for board in dependency.boards ?? [] where !["pico", "pico_w", "pico2", "pico2_w"].contains(board) {
-                throw DependencySupportError.message("dependency '\(dependency.name)' has unsupported board '\(board)'")
-            }
+        output += "target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(target))\n"
+      case .headerOnly:
+        let target = dependency.target ?? identifier
+        output += "FetchContent_MakeAvailable(\(identifier))\nadd_library(\(target) INTERFACE)\n"
+        for include in dependency.includeDirectories ?? ["."] {
+          output +=
+            "target_include_directories(\(target) INTERFACE \"${\(identifier)_SOURCE_DIR}/\(cmakeEscape(include))\")\n"
         }
-    }
-
-    private static func ensureUnique(
-        name: String,
-        target: String?,
-        module: String?,
-        resources: [String],
-        in manifest: FirmwareDependencies
-    ) throws {
-        if manifest.dependencies.contains(where: { $0.name == name }) { throw DependencySupportError.message("dependency '\(name)' already exists") }
-        if let target, manifest.dependencies.contains(where: { $0.target == target }) { throw DependencySupportError.message("dependency target '\(target)' already exists") }
-        if let module, manifest.dependencies.contains(where: { $0.module?.name == module }) { throw DependencySupportError.message("Clang module '\(module)' already exists") }
-        let owned = Set(manifest.dependencies.flatMap { $0.resources ?? [] })
-        if let conflict = resources.first(where: owned.contains) { throw DependencySupportError.message("resource ownership conflict for '\(conflict)'") }
-    }
-
-    private static func generate(
-        root: URL,
-        manifest: FirmwareDependencies,
-        lock: FirmwareDependencyLock
-    ) throws {
-        var output = """
-        # Generated by swiftpico dependencies resolve. Do not edit.
-        include(FetchContent)
-        set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
-
-        """
-        for dependency in manifest.dependencies.sorted(by: { $0.name < $1.name }) {
-            guard let resolution = lock.dependencies.first(where: { $0.name == dependency.name }) else {
-                throw DependencySupportError.message("dependencies.lock has no entry for '\(dependency.name)'")
-            }
-            let identifier = cmakeIdentifier(dependency.name)
-            let condition: String
-            if let boards = dependency.boards, !boards.isEmpty {
-                condition = "if(PICO_BOARD IN_LIST _swiftpico_\(identifier)_boards)\n  set(_swiftpico_\(identifier)_boards \(boards.joined(separator: " ")))"
-            } else {
-                condition = ""
-            }
-            if !condition.isEmpty { output += "set(_swiftpico_\(identifier)_boards \(dependency.boards!.joined(separator: " ")))\nif(PICO_BOARD IN_LIST _swiftpico_\(identifier)_boards)\n" }
-            if dependency.integration != .swiftSources {
-                let sourceSubdirectory: String
-                if dependency.integration == .cmakeTarget {
-                    sourceSubdirectory = dependency.cmakeSubdirectory.map { " SOURCE_SUBDIR \"\(cmakeEscape($0))\"" } ?? ""
-                } else {
-                    sourceSubdirectory = " SOURCE_SUBDIR __swiftpico_no_cmake_project__"
-                }
-                switch resolution.sourceType ?? FirmwareDependency.SourceType.git.rawValue {
-                case FirmwareDependency.SourceType.git.rawValue:
-                    output += "FetchContent_Declare(\(identifier) GIT_REPOSITORY \"\(cmakeEscape(resolution.repositoryURL))\" GIT_TAG \(resolution.exactCommit) GIT_SHALLOW FALSE\(sourceSubdirectory))\n"
-                case FirmwareDependency.SourceType.local.rawValue:
-                    output += "FetchContent_Declare(\(identifier) SOURCE_DIR \"\(cmakeEscape(resolution.repositoryURL))\"\(sourceSubdirectory))\n"
-                case FirmwareDependency.SourceType.archive.rawValue:
-                    guard let sha256 = resolution.archiveSHA256 else {
-                        throw DependencySupportError.message("dependencies.lock has no archiveSHA256 for '\(dependency.name)'")
-                    }
-                    output += "FetchContent_Declare(\(identifier) URL \"\(cmakeEscape(resolution.repositoryURL))\" URL_HASH SHA256=\(sha256)\(sourceSubdirectory))\n"
-                default:
-                    throw DependencySupportError.message("dependencies.lock has unsupported source type for '\(dependency.name)'")
-                }
-                appendCMakeOptions(dependency, to: &output)
-            }
-            switch dependency.integration {
-            case .cmakeTarget:
-                guard let target = dependency.target else { throw DependencySupportError.message("\(dependency.name) requires target") }
-                output += "FetchContent_MakeAvailable(\(identifier))\n"
-                appendTargetSettings(dependency, target: target, to: &output)
-                output += "target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(target))\n"
-            case .swiftSources:
-                guard let target = dependency.target, let product = dependency.product, let package = dependency.package else {
-                    throw DependencySupportError.message("\(dependency.name) requires package, product, and target")
-                }
-                output += "picokit_add_swift_library(\(product) SOURCE_DIR \"${CMAKE_CURRENT_LIST_DIR}/../../.build/checkouts/\(package)/Sources/\(target)\")\n"
-                output += "target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(product))\n"
-            case .sources:
-                let target = dependency.target ?? identifier
-                let sources = dependency.sources ?? []
-                guard !sources.isEmpty else { throw DependencySupportError.message("\(dependency.name) source integration requires sources") }
-                output += "FetchContent_MakeAvailable(\(identifier))\n"
-                let language = dependency.language == .cpp ? "CXX" : "C"
-                output += "add_library(\(target) STATIC\n"
-                for source in sources { output += "  \"${\(identifier)_SOURCE_DIR}/\(cmakeEscape(source))\"\n" }
-                output += ")\nset_target_properties(\(target) PROPERTIES LINKER_LANGUAGE \(language))\n"
-                appendTargetSettings(dependency, target: target, to: &output)
-                if dependency.language == .cpp { output += "target_compile_options(\(target) PRIVATE -fno-exceptions -fno-rtti)\n" }
-                output += "target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(target))\n"
-            case .headerOnly:
-                let target = dependency.target ?? identifier
-                output += "FetchContent_MakeAvailable(\(identifier))\nadd_library(\(target) INTERFACE)\n"
-                for include in dependency.includeDirectories ?? ["."] {
-                    output += "target_include_directories(\(target) INTERFACE \"${\(identifier)_SOURCE_DIR}/\(cmakeEscape(include))\")\n"
-                }
-                appendTargetSettings(dependency, target: target, visibility: "INTERFACE", to: &output)
-                output += "target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(target))\n"
-            }
-            if dependency.integration != .swiftSources {
-                for include in dependency.includeDirectories ?? [] {
-                    output += "list(APPEND PICOKIT_DEPENDENCY_CLANG_FLAGS -Xcc -I${\(identifier)_SOURCE_DIR}/\(cmakeEscape(include)))\n"
-                }
-                for header in dependency.configurationHeaders ?? [] {
-                    let directory = (header as NSString).deletingLastPathComponent
-                    let includeDirectory = directory.isEmpty ? "." : directory
-                    output += "list(APPEND PICOKIT_DEPENDENCY_CLANG_FLAGS -Xcc -I${\(identifier)_SOURCE_DIR}/\(cmakeEscape(includeDirectory)))\n"
-                }
-                for definition in dependency.compileDefinitions ?? [] {
-                    output += "list(APPEND PICOKIT_DEPENDENCY_CLANG_FLAGS -Xcc -D\(cmakeEscape(definition)))\n"
-                }
-                if let module = dependency.module {
-                    let moduleDirectory = "${CMAKE_BINARY_DIR}/swiftpico-modules/\(cmakeIdentifier(module.name))"
-                    let moduleMap = "\(moduleDirectory)/module.modulemap"
-                    output += "file(MAKE_DIRECTORY \"\(moduleDirectory)\")\n"
-                    output += "file(WRITE \"\(moduleMap)\" \"module \(module.name) {\\n  header \\\"${\(identifier)_SOURCE_DIR}/\(cmakeEscape(module.umbrellaHeader))\\\"\\n  export *\\n}\\n\")\n"
-                    output += "list(APPEND PICOKIT_DEPENDENCY_MODULE_MAPS \"\(moduleMap)\")\n"
-                }
-            }
-            if !condition.isEmpty { output += "endif()\n" }
-            output += "\n"
-        }
-        let url = root.appendingPathComponent(generatedPath)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try output.write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    private static func appendCMakeOptions(_ dependency: FirmwareDependency, to output: inout String) {
-        for (key, value) in (dependency.cmakeOptions ?? [:]).sorted(by: { $0.key < $1.key }) {
-            output += "set(\(key) \"\(cmakeEscape(value))\" CACHE STRING \"SwiftPico dependency option\" FORCE)\n"
-        }
-    }
-
-    private static func appendTargetSettings(
-        _ dependency: FirmwareDependency,
-        target: String,
-        visibility: String = "PUBLIC",
-        to output: inout String
-    ) {
+        appendTargetSettings(dependency, target: target, visibility: "INTERFACE", to: &output)
+        output += "target_link_libraries(${PICOKIT_PRODUCT} PRIVATE \(target))\n"
+      }
+      if dependency.integration != .swiftSources {
         for include in dependency.includeDirectories ?? [] {
-            output += "target_include_directories(\(target) \(visibility) \"${\(cmakeIdentifier(dependency.name))_SOURCE_DIR}/\(cmakeEscape(include))\")\n"
+          output +=
+            "list(APPEND PICOKIT_DEPENDENCY_CLANG_FLAGS -Xcc -I${\(identifier)_SOURCE_DIR}/\(cmakeEscape(include)))\n"
         }
         for header in dependency.configurationHeaders ?? [] {
-            let directory = (header as NSString).deletingLastPathComponent
-            let includeDirectory = directory.isEmpty ? "." : directory
-            output += "target_include_directories(\(target) \(visibility) \"${\(cmakeIdentifier(dependency.name))_SOURCE_DIR}/\(cmakeEscape(includeDirectory))\")\n"
+          let directory = (header as NSString).deletingLastPathComponent
+          let includeDirectory = directory.isEmpty ? "." : directory
+          output +=
+            "list(APPEND PICOKIT_DEPENDENCY_CLANG_FLAGS -Xcc -I${\(identifier)_SOURCE_DIR}/\(cmakeEscape(includeDirectory)))\n"
         }
-        if let definitions = dependency.compileDefinitions, !definitions.isEmpty {
-            output += "target_compile_definitions(\(target) \(visibility) \(definitions.map(cmakeEscape).joined(separator: " ")))\n"
+        for definition in dependency.compileDefinitions ?? [] {
+          output +=
+            "list(APPEND PICOKIT_DEPENDENCY_CLANG_FLAGS -Xcc -D\(cmakeEscape(definition)))\n"
         }
-        if let options = dependency.compileOptions, !options.isEmpty {
-            output += "target_compile_options(\(target) \(visibility == "INTERFACE" ? "INTERFACE" : "PRIVATE") \(options.map(cmakeEscape).joined(separator: " ")))\n"
+        if let module = dependency.module {
+          let moduleDirectory =
+            "${CMAKE_BINARY_DIR}/swiftpico-modules/\(cmakeIdentifier(module.name))"
+          let moduleMap = "\(moduleDirectory)/module.modulemap"
+          output += "file(MAKE_DIRECTORY \"\(moduleDirectory)\")\n"
+          output +=
+            "file(WRITE \"\(moduleMap)\" \"module \(module.name) {\\n  header \\\"${\(identifier)_SOURCE_DIR}/\(cmakeEscape(module.umbrellaHeader))\\\"\\n  export *\\n}\\n\")\n"
+          output += "list(APPEND PICOKIT_DEPENDENCY_MODULE_MAPS \"\(moduleMap)\")\n"
         }
+      }
+      if !condition.isEmpty { output += "endif()\n" }
+      output += "\n"
     }
+    let url = root.appendingPathComponent(generatedPath)
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try output.write(to: url, atomically: true, encoding: .utf8)
+  }
 
-    private static func sourceType(of dependency: FirmwareDependency) throws -> FirmwareDependency.SourceType {
-        let value = dependency.sourceType ?? FirmwareDependency.SourceType.git.rawValue
-        guard let sourceType = FirmwareDependency.SourceType(rawValue: value) else {
-            throw DependencySupportError.message("dependency '\(dependency.name)' has unsupported sourceType '\(value)'")
-        }
-        return sourceType
+  private static func appendCMakeOptions(_ dependency: FirmwareDependency, to output: inout String)
+  {
+    for (key, value) in (dependency.cmakeOptions ?? [:]).sorted(by: { $0.key < $1.key }) {
+      output +=
+        "set(\(key) \"\(cmakeEscape(value))\" CACHE STRING \"SwiftPico dependency option\" FORCE)\n"
     }
+  }
 
-    private static func resolveLocalSource(_ value: String, relativeTo root: URL) throws -> URL {
-        let source = URL(fileURLWithPath: value, relativeTo: root).standardizedFileURL
-        var directory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: source.path, isDirectory: &directory), directory.boolValue else {
-            throw DependencySupportError.message("local dependency source does not exist or is not a directory: \(source.path)")
-        }
-        return source
+  private static func appendTargetSettings(
+    _ dependency: FirmwareDependency,
+    target: String,
+    visibility: String = "PUBLIC",
+    to output: inout String
+  ) {
+    for include in dependency.includeDirectories ?? [] {
+      output +=
+        "target_include_directories(\(target) \(visibility) \"${\(cmakeIdentifier(dependency.name))_SOURCE_DIR}/\(cmakeEscape(include))\")\n"
     }
+    for header in dependency.configurationHeaders ?? [] {
+      let directory = (header as NSString).deletingLastPathComponent
+      let includeDirectory = directory.isEmpty ? "." : directory
+      output +=
+        "target_include_directories(\(target) \(visibility) \"${\(cmakeIdentifier(dependency.name))_SOURCE_DIR}/\(cmakeEscape(includeDirectory))\")\n"
+    }
+    if let definitions = dependency.compileDefinitions, !definitions.isEmpty {
+      output +=
+        "target_compile_definitions(\(target) \(visibility) \(definitions.map(cmakeEscape).joined(separator: " ")))\n"
+    }
+    if let options = dependency.compileOptions, !options.isEmpty {
+      output +=
+        "target_compile_options(\(target) \(visibility == "INTERFACE" ? "INTERFACE" : "PRIVATE") \(options.map(cmakeEscape).joined(separator: " ")))\n"
+    }
+  }
 
-    private static func resolveRevision(url: String, revision: String) throws -> String {
-        if revision.range(of: "^[0-9a-fA-F]{40}$", options: .regularExpression) != nil { return revision.lowercased() }
-        let candidates = ["refs/tags/\(revision)^{}", "refs/tags/\(revision)", "refs/heads/\(revision)", revision]
-        for candidate in candidates {
-            let output = try? run(["git", "ls-remote", url, candidate])
-            if let line = output?.split(whereSeparator: \.isNewline).first,
-               let commit = line.split(whereSeparator: \.isWhitespace).first,
-               commit.count == 40 {
-                return String(commit).lowercased()
-            }
-        }
-        throw DependencySupportError.message("could not resolve '\(revision)' from \(url)")
+  private static func sourceType(of dependency: FirmwareDependency) throws
+    -> FirmwareDependency.SourceType
+  {
+    let value = dependency.sourceType ?? FirmwareDependency.SourceType.git.rawValue
+    guard let sourceType = FirmwareDependency.SourceType(rawValue: value) else {
+      throw DependencySupportError.message(
+        "dependency '\(dependency.name)' has unsupported sourceType '\(value)'")
     }
+    return sourceType
+  }
 
-    private static func run(_ command: [String]) throws -> String {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = command
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        process.waitUntilExit()
-        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw DependencySupportError.message("command failed: \(command.joined(separator: " "))\n\(text)")
-        }
-        return text
+  private static func resolveLocalSource(_ value: String, relativeTo root: URL) throws -> URL {
+    let source = URL(fileURLWithPath: value, relativeTo: root).standardizedFileURL
+    var directory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: source.path, isDirectory: &directory),
+      directory.boolValue
+    else {
+      throw DependencySupportError.message(
+        "local dependency source does not exist or is not a directory: \(source.path)")
     }
+    return source
+  }
 
-    private static func firstLine(_ value: String) throws -> String {
-        guard let line = value.split(whereSeparator: \.isNewline).first else {
-            throw DependencySupportError.message("command returned no output")
-        }
-        return String(line)
+  private static func resolveRevision(url: String, revision: String) throws -> String {
+    if revision.range(of: "^[0-9a-fA-F]{40}$", options: .regularExpression) != nil {
+      return revision.lowercased()
     }
+    let candidates = [
+      "refs/tags/\(revision)^{}", "refs/tags/\(revision)", "refs/heads/\(revision)", revision,
+    ]
+    for candidate in candidates {
+      let output = try? run(["git", "ls-remote", url, candidate])
+      if let line = output?.split(whereSeparator: \.isNewline).first,
+        let commit = line.split(whereSeparator: \.isWhitespace).first,
+        commit.count == 40
+      {
+        return String(commit).lowercased()
+      }
+    }
+    throw DependencySupportError.message("could not resolve '\(revision)' from \(url)")
+  }
 
-    private static func cmakeIdentifier(_ value: String) -> String {
-        let mapped = value.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) || $0 == "_" ? Character(String($0)) : "_" }
-        let result = String(mapped)
-        return (result.first?.isNumber == true ? "dependency_\(result)" : result).lowercased()
+  private static func run(_ command: [String]) throws -> String {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = command
+    process.standardOutput = output
+    process.standardError = output
+    try process.run()
+    process.waitUntilExit()
+    let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    guard process.terminationStatus == 0 else {
+      throw DependencySupportError.message(
+        "command failed: \(command.joined(separator: " "))\n\(text)")
     }
+    return text
+  }
 
-    private static func cmakeEscape(_ value: String) -> String {
-        value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+  private static func firstLine(_ value: String) throws -> String {
+    guard let line = value.split(whereSeparator: \.isNewline).first else {
+      throw DependencySupportError.message("command returned no output")
     }
+    return String(line)
+  }
 
-    private static func load<T: Decodable>(_ url: URL) throws -> T {
-        try JSONDecoder().decode(T.self, from: Data(contentsOf: url))
+  private static func cmakeIdentifier(_ value: String) -> String {
+    let mapped = value.unicodeScalars.map {
+      CharacterSet.alphanumerics.contains($0) || $0 == "_" ? Character(String($0)) : "_"
     }
+    let result = String(mapped)
+    return (result.first?.isNumber == true ? "dependency_\(result)" : result).lowercased()
+  }
 
-    private static func write<T: Encodable>(_ value: T, to url: URL) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try encoder.encode(value).write(to: url, options: .atomic)
-    }
+  private static func cmakeEscape(_ value: String) -> String {
+    value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+  }
 
-    private static func writeIfMissing<T: Encodable>(_ value: T, to url: URL) throws {
-        guard !FileManager.default.fileExists(atPath: url.path) else { return }
-        try write(value, to: url)
-    }
+  private static func load<T: Decodable>(_ url: URL) throws -> T {
+    try JSONDecoder().decode(T.self, from: Data(contentsOf: url))
+  }
 
-    private static func writeTextIfMissing(_ value: String, to url: URL) throws {
-        guard !FileManager.default.fileExists(atPath: url.path) else { return }
-        try value.write(to: url, atomically: true, encoding: .utf8)
-    }
+  private static func write<T: Encodable>(_ value: T, to url: URL) throws {
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    try encoder.encode(value).write(to: url, options: .atomic)
+  }
+
+  private static func writeIfMissing<T: Encodable>(_ value: T, to url: URL) throws {
+    guard !FileManager.default.fileExists(atPath: url.path) else { return }
+    try write(value, to: url)
+  }
+
+  private static func writeTextIfMissing(_ value: String, to url: URL) throws {
+    guard !FileManager.default.fileExists(atPath: url.path) else { return }
+    try value.write(to: url, atomically: true, encoding: .utf8)
+  }
 }

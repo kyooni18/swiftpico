@@ -1,35 +1,38 @@
-import Foundation
 import Dispatch
+import Foundation
+
 #if os(macOS)
-import Darwin
+  import Darwin
 #else
-import Glibc
+  import Glibc
 #endif
 
 extension SwiftPicoCommand {
-    static func showInfo(_ arguments: [String]) throws {
-        let project = try context(arguments)
-        let config = project.config
-        print("=== PicoKit Project Info ===")
-        print("  Root:        \(project.root.path)")
-        print("  Board:       \(config.board)")
-        print("  Product:     \(config.product ?? "default")")
-        print("  Config:      \(config.configuration)")
-        print("  Firmware:    \(config.firmwareDirectory ?? "SwiftPM")")
-        print("  Swift SDK:   \(config.swiftSDK ?? "not set")")
-        print("  UF2 path:    \(config.uf2 ?? "not set")")
-        print("  OpenOCD:     \(config.openOCD)")
-        print("  OpenOCD cfg: \(config.openOCDConfig.joined(separator: ", "))")
+  static func showInfo(_ arguments: [String]) throws {
+    let project = try context(arguments)
+    let config = project.config
+    print("=== PicoKit Project Info ===")
+    print("  Root:        \(project.root.path)")
+    print("  Board:       \(config.board)")
+    print("  Product:     \(config.product ?? "default")")
+    print("  Config:      \(config.configuration)")
+    print("  Firmware:    \(config.firmwareDirectory ?? "SwiftPM")")
+    print("  Swift SDK:   \(config.swiftSDK ?? "not set")")
+    print("  UF2 path:    \(config.uf2 ?? "not set")")
+    print("  OpenOCD:     \(config.openOCD)")
+    print("  OpenOCD cfg: \(config.openOCDConfig.joined(separator: ", "))")
 
-        if let uf2 = config.uf2, FileManager.default.fileExists(atPath: project.url(for: uf2).path) {
-            let attrs = try FileManager.default.attributesOfItem(atPath: project.url(for: uf2).path)
-            if let size = attrs[.size] as? Int {
-                print("  UF2 size:    \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))")
-            }
-        }
+    if let uf2 = config.uf2, FileManager.default.fileExists(atPath: project.url(for: uf2).path) {
+      let attrs = try FileManager.default.attributesOfItem(atPath: project.url(for: uf2).path)
+      if let size = attrs[.size] as? Int {
+        print(
+          "  UF2 size:    \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))"
+        )
+      }
     }
+  }
 
-    static let usage = """
+  static let usage = """
     SwiftPico — project tooling for PicoKit and Raspberry Pi Pico/Pico 2
 
     Commands:
