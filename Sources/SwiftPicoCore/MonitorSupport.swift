@@ -33,6 +33,22 @@ private func configureSerialDescriptor(_ descriptor: Int32, baud: speed_t) throw
   else {
     throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
   }
+
+  // Opening a tty does not consistently assert DTR, especially for macOS
+  // /dev/cu.* devices. USB CDC firmware normally uses DTR as the authoritative
+  // signal that a host reader is attached, so make that contract explicit.
+  let dtrResult: Int32
+  #if os(Linux)
+    var modemBits = Int32(TIOCM_DTR)
+    dtrResult = ioctl(descriptor, UInt(TIOCMBIS), &modemBits)
+  #else
+    dtrResult = ioctl(descriptor, TIOCSDTR)
+  #endif
+  // Pseudo-terminals and some UART adapters expose a byte stream without
+  // modem-control lines. They remain valid monitor targets on every platform.
+  guard dtrResult == 0 || errno == ENOTTY || errno == EINVAL else {
+    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+  }
 }
 
 func configureMonitorInput() throws -> termios {
@@ -163,12 +179,20 @@ final class SerialConnection: @unchecked Sendable {
 
   @discardableResult
   func write(_ data: Data) -> Bool {
+    var offset = 0
+    return write(data, offset: &offset)
+  }
+
+  /// Writes from `offset`, retaining the unwritten suffix when a device
+  /// disappears partway through a buffer. Callers can retry without
+  /// duplicating bytes that the kernel accepted before the disconnect.
+  @discardableResult
+  func write(_ data: Data, offset: inout Int) -> Bool {
     lock.lock()
     defer { lock.unlock() }
     guard descriptor >= 0 else { return false }
     var succeeded = true
     data.withUnsafeBytes { bytes in
-      var offset = 0
       while offset < bytes.count {
         let count: Int
         #if os(Linux)

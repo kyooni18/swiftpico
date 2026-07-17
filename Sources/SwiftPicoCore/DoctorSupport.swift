@@ -30,6 +30,7 @@ extension SwiftPicoCommand {
 
   static func doctor(_ arguments: [String]) throws {
     let current = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+    let detectedSerialDevices = serialDevices()
     let hasExplicitContext = option("--context", in: arguments) != nil
     let hasDiscoveredContext = findContext(from: current) != nil
     let project = (hasExplicitContext || hasDiscoveredContext) ? try context(arguments) : nil
@@ -56,13 +57,10 @@ extension SwiftPicoCommand {
       let lock = project.root.appendingPathComponent(DependencySupport.lockPath)
       let generated = project.root.appendingPathComponent(DependencySupport.generatedPath)
       let state = project.root.appendingPathComponent(".swiftpico/firmware-build.json")
+      let legacyPicoKitRoot = picoKitRoot == project.root && project.config.schemaVersion == nil
       print("  Project:     \(project.root.path) (schema \(project.config.schemaVersion ?? 0))")
-      print(
-        "  Lock file:   \(FileManager.default.fileExists(atPath: lock.path) ? "available" : "MISSING (run swiftpico dependencies resolve)")"
-      )
-      print(
-        "  CMake state: \(FileManager.default.fileExists(atPath: generated.path) ? "generated" : "MISSING (run swiftpico dependencies generate)")"
-      )
+      print("  Lock file:   \(legacyPicoKitRoot ? "not applicable (legacy PicoKit checkout)" : (FileManager.default.fileExists(atPath: lock.path) ? "available" : "MISSING (run swiftpico dependencies resolve)"))")
+      print("  CMake state: \(legacyPicoKitRoot ? "not applicable (legacy PicoKit checkout)" : (FileManager.default.fileExists(atPath: generated.path) ? "generated" : "MISSING (run swiftpico dependencies generate)"))")
       print(
         "  Build state: \(FileManager.default.fileExists(atPath: state.path) ? "recorded" : "not built")"
       )
@@ -71,7 +69,7 @@ extension SwiftPicoCommand {
     }
     print("  Boot volumes: \(findBootVolume()?.path ?? "none")")
     print(
-      "  Serial:      \(serialDevices().joined(separator: ", ").isEmpty ? "none" : serialDevices().joined(separator: ", "))"
+      "  Serial:      \(detectedSerialDevices.joined(separator: ", ").isEmpty ? "none" : detectedSerialDevices.joined(separator: ", "))"
     )
     try reportCallbackProbe()
   }

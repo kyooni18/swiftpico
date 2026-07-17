@@ -58,7 +58,8 @@ extension SwiftPicoCommand {
 
     // The Pico SDK's CDC reset is independent of picotool's forced-reset
     // serial tracking. Prefer it for the ordinary one-board workflow.
-    if requestedPicotool == nil, serialDevices().count == 1 {
+    let detectedSerialDevices = serialDevices()
+    if requestedPicotool == nil, detectedSerialDevices.count == 1 {
       print("Requesting BOOTSEL over USB serial…")
       do {
         try resetToBootloaderOverUSB()
@@ -95,8 +96,14 @@ extension SwiftPicoCommand {
       picotoolFailed
       ? "picotool could not access an RP-series device"
       : "picotool was not found"
+    let serialRecovery =
+      requestedPicotool == nil && detectedSerialDevices.count == 1
+      ? "USB serial reset also failed for \(detectedSerialDevices[0])"
+      : requestedPicotool != nil
+      ? "USB serial reset was not attempted because --picotool was supplied"
+      : "no single USB serial device is available for the automatic BOOTSEL reset"
     throw CLIError.message(
-      "\(picotoolReason), and no single USB serial device is available for the automatic BOOTSEL reset. Connect the Pico with a data cable while holding BOOTSEL, or pass --volume /Volumes/RPI-RP2 to use an already-mounted BOOTSEL volume."
+      "\(picotoolReason), and \(serialRecovery). Connect the Pico with a data cable while holding BOOTSEL, or pass --volume /Volumes/RPI-RP2 to use an already-mounted BOOTSEL volume."
     )
   }
 

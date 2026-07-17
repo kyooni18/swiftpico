@@ -12,6 +12,17 @@ extension SwiftPicoCommand {
       return root
     }
 
+    // Legacy PicoKit checkouts use `picokit.json` at the repository root and
+    // therefore have no generated dependency manifest. Recognize that root
+    // directly before attempting package-cache installation.
+    if FileManager.default.fileExists(
+      atPath: project.root.appendingPathComponent("Package.swift").path),
+      FileManager.default.fileExists(
+        atPath: project.root.appendingPathComponent("Sources/PicoKitFacade").path)
+    {
+      return project.root
+    }
+
     let checkout = project.root.appendingPathComponent(
       ".build/checkouts/PicoKit", isDirectory: true)
     if FileManager.default.fileExists(

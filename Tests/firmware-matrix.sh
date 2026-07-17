@@ -19,8 +19,18 @@ for board in pico pico_w pico2 pico2_w; do
     grep -q '"schemaVersion" : 1' "$project/swiftpico.json"
     grep -q "\"board\" : \"$board\"" "$project/swiftpico.json"
     test -f "$project/Firmware/Generated/Dependencies.cmake"
+    # Force every high-level GPIO facade symbol into one final executable per
+    # MCU family instead of relying on module compilation or dead code alone.
+    if [ "$board" = pico ] || [ "$board" = pico2 ]; then
+        cp "$kit/Tests/fixtures/gpio-facade/main.swift" \
+            "$project/Sources/MatrixApp/main.swift"
+    fi
     if [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
         "$cli" build --configuration release --context "$project/swiftpico.json"
+        if { [ "$board" = pico ] || [ "$board" = pico2 ]; } && \
+           command -v arm-none-eabi-nm >/dev/null 2>&1; then
+            "$kit/Tests/gpio-facade-size.sh" "$project/Firmware/build/MatrixApp.elf"
+        fi
     fi
     if [ "$board" = pico ] && [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
         state="$project/.swiftpico/firmware-build.json"
@@ -37,6 +47,8 @@ for board in pico pico2_w; do
     project="$tmp/serial-$board"
     "$cli" init --board "$board" --name SerialMatrix --template serial --path "$project" --pico-kit-path "$kit"
     grep -q 'Serial.read()' "$project/Sources/SerialMatrix/main.swift"
+    grep -q 'Serial echo ready' "$project/Sources/SerialMatrix/main.swift"
+    grep -q 'if !Serial.connected' "$project/Sources/SerialMatrix/main.swift"
     if [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
         "$cli" build --configuration release --context "$project/swiftpico.json"
     fi

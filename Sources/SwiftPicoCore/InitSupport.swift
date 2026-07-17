@@ -16,6 +16,13 @@ extension SwiftPicoCommand {
     }
     let board = picoBoard.rawValue
     let name = option("--name", in: arguments) ?? "PicoApp"
+    guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      name != ".", name != "..", !name.contains("/"), !name.contains("\\"),
+      name.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
+    else {
+      throw CLIError.message(
+        "invalid project name \(String(reflecting: name)). Use a non-empty name without path separators or control characters.")
+    }
     let template = option("--template", in: arguments) ?? "blink"
     guard availableTemplates.contains(template) else {
       throw CLIError.message(

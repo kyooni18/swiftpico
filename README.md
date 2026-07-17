@@ -28,15 +28,27 @@ swiftpico flash
 swiftpico monitor --reconnect
 ```
 
+Project names must be non-empty, must not contain `/` or `\\`, must not be `.` or `..`,
+and must not contain control characters; this keeps generated projects inside the
+requested destination and their metadata well-formed.
+
 `monitor` forwards typed bytes to the board while displaying its USB CDC output.
 It keeps Ctrl-C for leaving the terminal and restores the local terminal mode on
-exit.
+exit. With `--reconnect`, it keeps the input writer alive across a CDC reset and
+retries bytes typed while the replacement device is coming back.
 
 The `serial` template is an exact byte echo using `Serial.read()` and raw-byte
 `Serial.write(_:)`; it deliberately does not translate line endings. That makes
-it useful for both interactive bring-up and byte-level USB hardware checks.
+it useful for both interactive bring-up and byte-level USB hardware checks. It
+waits for a monitor connection, prints `Serial echo ready`, and prints that
+readiness line again after a disconnect and reconnect.
 
 `init` creates a standalone Swift package pinned to one exact PicoKit release, a board-specific `swiftpico.json`, a firmware CMake entrypoint, application-owned interop files, and a local `swiftpico` launcher. Add `--pico-kit-version VERSION` to select the release explicitly, or `--skip-resolve` for an offline scaffold. Use `--pico-kit-path /path/to/PicoKit` to develop against a local checkout before a PicoKit change is released as a tag.
+
+Run `swiftpico doctor` from a generated project to inspect the selected PicoKit
+checkout, cached SDK, bridge, boot volume, and serial devices. Running it from
+the PicoKit repository itself recognizes the legacy `picokit.json` checkout and
+does not require generated dependency lock or CMake files.
 
 Pico SDK is cached once per pinned SDK commit rather than initialized inside every project’s PicoKit checkout. `swiftpico build` creates the shared cache automatically. By default it uses the platform cache directory; set `SWIFTPICO_CACHE_DIR` to place it on a shared drive or in your CI cache. A project can still set `picoSDKPath` in `swiftpico.json` to use an explicit SDK checkout.
 

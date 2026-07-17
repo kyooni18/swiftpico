@@ -9,7 +9,9 @@ import Foundation
 
 extension SwiftPicoCommand {
   static func captureProcessOutput(_ command: [String]) throws -> String {
-    precondition(!command.isEmpty)
+    guard !command.isEmpty else {
+      throw CLIError.message("cannot run an empty command")
+    }
     let process = Process()
     let output = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -33,7 +35,12 @@ extension SwiftPicoCommand {
     _ command: [String], currentDirectory: URL? = nil, quiet: Bool = false,
     timeout: TimeInterval? = nil
   ) throws {
-    precondition(!command.isEmpty)
+    guard !command.isEmpty else {
+      throw CLIError.message("cannot run an empty command")
+    }
+    if let timeout, timeout < 0 {
+      throw CLIError.message("process timeout must not be negative")
+    }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = command
@@ -75,7 +82,7 @@ extension SwiftPicoCommand {
     timeoutLock.unlock()
     if didTimeOut {
       throw CLIError.message(
-        "command timed out after \(Int(timeout ?? 0)) seconds: \(command.joined(separator: " "))")
+        "command timed out after \(timeout ?? 0) seconds: \(command.joined(separator: " "))")
     }
     guard process.terminationStatus == 0 else {
       throw CLIError.message(

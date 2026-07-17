@@ -29,6 +29,26 @@ printf '%s\n' "$progressOutput" | grep -q 'Starting SwiftPico project initializa
 printf '%s\n' "$progressOutput" | grep -q 'Creating project configuration and source files'
 printf '%s\n' "$progressOutput" | grep -q 'Skipping dependency resolution'
 
+invalidProject="$tmp/invalid-name"
+invalidOutput="$tmp/invalid-name.log"
+if "$cli" init --board pico --name "../escape" --path "$invalidProject" --skip-resolve >"$invalidOutput" 2>&1; then
+    echo "invalid project name unexpectedly succeeded" >&2
+    exit 1
+fi
+test ! -e "$invalidProject/swiftpico.json"
+grep -q 'invalid project name' "$invalidOutput"
+
+controlProject="$tmp/control-name"
+controlOutput="$tmp/control-name.log"
+controlName=$(printf 'line\nfeed')
+if "$cli" init --board pico --name "$controlName" --path "$controlProject" --skip-resolve >"$controlOutput" 2>&1; then
+    echo "control-character project name unexpectedly succeeded" >&2
+    exit 1
+fi
+test ! -e "$controlProject/swiftpico.json"
+! grep -q '^feed' "$controlOutput"
+grep -q 'invalid project name' "$controlOutput"
+
 grep -q 'github.com/kyooni18/PicoKit.git' "$tmp/serial/Package.swift"
 grep -q 'PICO_SDK_PATH must point to the shared Pico SDK' "$tmp/serial/Firmware/CMakeLists.txt"
 ! grep -q 'Vendor/pico-sdk' "$tmp/serial/Firmware/CMakeLists.txt"
@@ -36,7 +56,8 @@ grep -Fq 'initialize_usb_interface_at_start' "$tmp/serial/swiftpico.json"
 ! grep -Fq 'pico_enable_stdio_usb(${PICOKIT_PRODUCT} 1)' "$tmp/serial/Firmware/CMakeLists.txt"
 grep -q 'Serial.read()' "$tmp/serial/Sources/serial/main.swift"
 grep -Fq 'Serial.write(byte)' "$tmp/serial/Sources/serial/main.swift"
-! grep -Fq 'Serial.println()' "$tmp/serial/Sources/serial/main.swift"
+grep -Fq 'Serial.println("Serial echo ready")' "$tmp/serial/Sources/serial/main.swift"
+grep -Fq 'if !Serial.connected' "$tmp/serial/Sources/serial/main.swift"
 grep -q 'sleepMicroseconds(100)' "$tmp/serial/Sources/serial/main.swift"
 grep -q 'Serial.println' "$tmp/blink/Sources/blink/main.swift"
 grep -q 'BoardLED' "$tmp/blink/Sources/blink/main.swift"

@@ -62,11 +62,16 @@ extension SwiftPicoCommand {
     let inputThread = Thread {
       while true {
         guard let data = readMonitorInput() else { return }
-        guard connection.write(data) else {
+        var offset = 0
+        while offset < data.count && !connection.write(data, offset: &offset) {
           connection.close()
-          return
+          guard arguments.contains("--reconnect") else { return }
+          // Preserve bytes typed during a CDC reset. The main monitor loop
+          // owns reconnection; retrying this same buffer lets the input side
+          // resume automatically once the replacement descriptor is ready.
+          Thread.sleep(forTimeInterval: 0.25)
         }
-        traffic.recordSent(data.count)
+        if offset == data.count { traffic.recordSent(data.count) }
       }
     }
     inputThread.qualityOfService = .userInteractive

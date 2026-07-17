@@ -39,8 +39,14 @@ extension SwiftPicoCommand {
         struct Blink {
             static func main() {
                 let led = try! BoardLED(board: .\(boardCase))
-                Serial.println("Blink started")
+                var announced = false
                 while true {
+                    if Serial.connected && !announced {
+                        Serial.println("Blink started")
+                        announced = true
+                    } else if !Serial.connected {
+                        announced = false
+                    }
                     try! led.set(.high)
                     sleep(500)
                     try! led.set(.low)
@@ -58,8 +64,14 @@ extension SwiftPicoCommand {
       struct Blink {
           static func main() {
               pinMode(25, .output)
-              Serial.println("Blink started")
+              var announced = false
               while true {
+                  if Serial.connected && !announced {
+                      Serial.println("Blink started")
+                      announced = true
+                  } else if !Serial.connected {
+                      announced = false
+                  }
                   digitalWrite(25, .high)
                   sleep(500)
                   digitalWrite(25, .low)
@@ -77,8 +89,15 @@ extension SwiftPicoCommand {
     @main
     struct SerialEcho {
         static func main() {
+            var announced = false
             while true {
-                if let byte = Serial.read() {
+                if !Serial.connected {
+                    announced = false
+                    sleep(10)
+                } else if !announced {
+                    Serial.println("Serial echo ready")
+                    announced = true
+                } else if let byte = Serial.read() {
                     Serial.write(byte)
                 } else {
                     sleepMicroseconds(100)
@@ -99,7 +118,9 @@ extension SwiftPicoCommand {
             let adc = try! PicoADC()
             while true {
                 let raw = try! adc.read(.gpio26)
-                Serial.println("ADC26: \\(raw)")
+                if Serial.connected {
+                    Serial.println("ADC26: \\(raw)")
+                }
                 sleep(1_000)
             }
         }

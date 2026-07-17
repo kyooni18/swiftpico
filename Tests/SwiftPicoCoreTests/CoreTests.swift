@@ -7,6 +7,18 @@ import Testing
   import Darwin
 #endif
 
+@Test func serialTemplatesRespectMonitorConnectionState() {
+  let serial = SwiftPicoCommand.templateSource(template: "serial", board: "pico", name: "Echo")
+  #expect(serial.contains("if !Serial.connected"))
+  #expect(serial.contains("Serial echo ready"))
+
+  let blink = SwiftPicoCommand.templateSource(template: "blink", board: "pico2_w", name: "Blink")
+  #expect(blink.contains("Serial.connected && !announced"))
+
+  let adc = SwiftPicoCommand.templateSource(template: "adc", board: "pico", name: "ADC")
+  #expect(adc.contains("if Serial.connected"))
+}
+
 @Test func configurationSchemas() throws {
   let legacy = try JSONDecoder().decode(PicoKitConfig.self, from: Data(#"{"board":"pico"}"#.utf8))
   #expect(try ProjectSchemaMigration.required(for: legacy.schemaVersion) == .legacyV0)
@@ -32,6 +44,58 @@ import Testing
   #expect(throws: (any Error).self) {
     try SwiftPicoCommand.validateArguments(
       command: "dependencies", arguments: ["update", "--revision", "main"])
+  }
+}
+
+@Test func projectNameValidationRejectsPathLikeNames() {
+  for name in ["", "   ", ".", "..", "../escape", "nested/project", "nested\\project", "line\nfeed"] {
+    #expect(throws: (any Error).self) {
+      try SwiftPicoCommand.initialise(["--name", name, "--skip-resolve"])
+    }
+  }
+  do {
+    try SwiftPicoCommand.initialise(["--name", "line\nfeed", "--skip-resolve"])
+    Issue.record("a control-character project name unexpectedly succeeded")
+  } catch {
+    #expect(error.localizedDescription.contains("\\n"))
+    #expect(!error.localizedDescription.contains("line\nfeed"))
+  }
+}
+
+@Test func emptyProcessCommandsReportErrors() {
+  #expect(throws: (any Error).self) {
+    try SwiftPicoCommand.captureProcessOutput([])
+  }
+  #expect(throws: (any Error).self) {
+    try SwiftPicoCommand.runProcess([])
+  }
+  #expect(throws: (any Error).self) {
+    try SwiftPicoCommand.runProcess(["true"], timeout: -1)
+  }
+}
+
+@Test func processOutputIncludesDiagnosticsFromBothStreams() throws {
+  let output = try SwiftPicoCommand.captureProcessOutput(
+    ["sh", "-c", "printf 'stdout'; printf 'stderr' >&2"])
+  #expect(output.contains("stdout"))
+  #expect(output.contains("stderr"))
+
+  do {
+    _ = try SwiftPicoCommand.captureProcessOutput(
+      ["sh", "-c", "printf 'failure-detail' >&2; exit 7"])
+    Issue.record("a failing command unexpectedly succeeded")
+  } catch {
+    #expect(error.localizedDescription.contains("exit 7"))
+    #expect(error.localizedDescription.contains("failure-detail"))
+  }
+}
+
+@Test func processTimeoutTerminatesHangingCommand() {
+  do {
+    try SwiftPicoCommand.runProcess(["sh", "-c", "sleep 2"], quiet: true, timeout: 0.05)
+    Issue.record("a hanging command unexpectedly completed")
+  } catch {
+    #expect(error.localizedDescription.contains("timed out after 0.05 seconds"))
   }
 }
 
@@ -119,6 +183,8 @@ import Testing
       return
     }
 
+    // A PTY has no DTR modem-control line. Opening it proves the monitor keeps
+    // byte-stream devices usable while asserting DTR on real USB CDC devices.
     let connection = SerialConnection()
     try connection.open(String(cString: slavePointer), baud: speed_t(115200))
     defer { connection.close() }
@@ -137,6 +203,35 @@ import Testing
     }
     #expect(count == outbound.count)
     #expect(Data(received) == outbound)
+  }
+
+  @Test func reconnectMonitorRetainsInputAfterWriteFailure() throws {
+    let packageRoot = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    let sourceURL = packageRoot.appendingPathComponent("Sources/SwiftPicoCore/MonitorCommands.swift")
+    let source = try String(contentsOfFile: sourceURL.path, encoding: .utf8)
+    #expect(source.contains("while offset < data.count && !connection.write(data, offset: &offset)"))
+    #expect(source.contains("Preserve bytes typed during a CDC reset"))
+    #expect(source.contains("arguments.contains(\"--reconnect\")"))
+    #expect(source.contains("connection.write(data, offset: &offset)"))
+    let readme = try String(
+      contentsOfFile: packageRoot.appendingPathComponent("README.md").path, encoding: .utf8)
+    #expect(readme.contains("retries bytes typed while the replacement device is coming back"))
+  }
+
+  @Test func flashDiagnosticsIncludeDetectedSerialPath() throws {
+    let packageRoot = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    let sourceURL = packageRoot.appendingPathComponent("Sources/SwiftPicoCore/FlashSupport.swift")
+    let source = try String(contentsOfFile: sourceURL.path, encoding: .utf8)
+    #expect(source.contains("USB serial reset also failed for \\(detectedSerialDevices[0])"))
+    #expect(!source.contains("USB serial reset also failed for (detectedSerialDevices[0])"))
+    #expect(source.contains("requestedPicotool == nil && detectedSerialDevices.count == 1"))
+    #expect(source.contains("USB serial reset was not attempted because --picotool was supplied"))
   }
 
   @Test func serialTrafficStatsAreThreadSafeCounters() {
