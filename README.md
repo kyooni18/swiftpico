@@ -177,3 +177,9 @@ PICOKIT_TEST_ROOT=../PicoKit sh Tests/firmware-matrix.sh
 The CLI integration suite generates every template and checks local PicoKit and
 fake-picotool paths. The firmware matrix compiles all boards plus serial echo on
 both RP2040 and RP2350 against the explicit local PicoKit checkout.
+
+## Documentation
+
+The complete documentation is in [`Docs/README.md`](Docs/README.md). It includes
+a beginner's guide, generated-project anatomy, template examples, the command
+and configuration reference, external-library integration, and troubleshooting.
