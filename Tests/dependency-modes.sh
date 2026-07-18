@@ -7,9 +7,9 @@ kit=$(CDPATH= cd -- "$kit" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-export PATH="/opt/homebrew/bin:$PATH"
-if [ -z "${SWIFTPICO_VALIDATE_ONLY:-}" ]; then
-    export PICO_SWIFTC=${PICO_SWIFTC:-/Users/kyooni18/Library/Developer/Toolchains/swift-DEVELOPMENT-SNAPSHOT-2026-07-05-a.xctoolchain/usr/bin/swiftc}
+if [ -d /opt/homebrew/bin ]; then
+    PATH="/opt/homebrew/bin:$PATH"
+    export PATH
 fi
 swift build --package-path "$root" --product swiftpico
 cli="$root/.build/debug/swiftpico"

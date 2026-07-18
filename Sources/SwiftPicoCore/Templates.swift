@@ -38,7 +38,9 @@ extension SwiftPicoCommand {
         @main
         struct Blink {
             static func main() {
-                let led = try! BoardLED(board: .\(boardCase))
+                guard let led = try? BoardLED(board: .\(boardCase)) else {
+                    halt("LED setup failed")
+                }
                 var announced = false
                 while true {
                     if Serial.connected && !announced {
@@ -47,11 +49,15 @@ extension SwiftPicoCommand {
                     } else if !Serial.connected {
                         announced = false
                     }
-                    try! led.set(.high)
+                    guard (try? led.set(.high)) != nil else { halt("LED write failed") }
                     sleep(500)
-                    try! led.set(.low)
+                    guard (try? led.set(.low)) != nil else { halt("LED write failed") }
                     sleep(500)
                 }
+            }
+            @inline(__always) static func halt(_ message: String) -> Never {
+                Serial.println(message)
+                while true { sleep(1_000) }
             }
         }
         """
@@ -115,14 +121,18 @@ extension SwiftPicoCommand {
     @main
     struct ADCExample {
         static func main() {
-            let adc = try! PicoADC()
+            guard let adc = try? PicoADC() else { halt("ADC setup failed") }
             while true {
-                let raw = try! adc.read(.gpio26)
+                guard let raw = try? adc.read(.gpio26) else { halt("ADC read failed") }
                 if Serial.connected {
                     Serial.println("ADC26: \\(raw)")
                 }
                 sleep(1_000)
             }
+        }
+        @inline(__always) static func halt(_ message: String) -> Never {
+            Serial.println(message)
+            while true { sleep(1_000) }
         }
     }
     """
@@ -135,12 +145,20 @@ extension SwiftPicoCommand {
     @main
     struct PWMExample {
         static func main() {
-            let pin = try! PicoPin(0)
-            let pwm = try! PicoPWM(pin: pin, frequency: .kilohertz(1))
+            guard let pin = try? PicoPin(0),
+                let pwm = try? PicoPWM(pin: pin, frequency: .kilohertz(1)) else {
+                halt("PWM setup failed")
+            }
             while true {
-                try! analogWrite(0, UInt8(128), using: pwm)
+                guard (try? analogWrite(0, UInt8(128), using: pwm)) != nil else {
+                    halt("PWM write failed")
+                }
                 sleep(10)
             }
+        }
+        @inline(__always) static func halt(_ message: String) -> Never {
+            Serial.println(message)
+            while true { sleep(1_000) }
         }
     }
     """
@@ -153,12 +171,21 @@ extension SwiftPicoCommand {
     @main
     struct I2CExample {
         static func main() {
-            let i2c = try! PicoI2C(.i2c0, frequency: .kilohertz(400), sda: try! PicoPin(4), scl: try! PicoPin(5))
-            let timeout = try! Duration.milliseconds(20)
+            guard let sda = try? PicoPin(4), let scl = try? PicoPin(5),
+                let i2c = try? PicoI2C(.i2c0, frequency: .kilohertz(400), sda: sda, scl: scl),
+                let timeout = try? Duration.milliseconds(20) else {
+                halt("I2C setup failed")
+            }
             while true {
-                _ = try? i2c.write(address: 0x50, bytes: [0], timeout: timeout)
+                if (try? i2c.write(address: 0x50, bytes: [0], timeout: timeout)) == nil {
+                    Serial.println("I2C write failed; retrying")
+                }
                 sleep(1_000)
             }
+        }
+        @inline(__always) static func halt(_ message: String) -> Never {
+            Serial.println(message)
+            while true { sleep(1_000) }
         }
     }
     """
@@ -171,7 +198,7 @@ extension SwiftPicoCommand {
     @main
     struct SPIExample {
         static func main() {
-            let spi = try! PicoSPI(
+            guard let spi = try? PicoSPI(
                 .spi0,
                 frequency: .megahertz(40),
                 sck: .gpio18,
@@ -179,7 +206,12 @@ extension SwiftPicoCommand {
                 miso: nil,
                 mode: .mode0
             )
-            try! spi.write([UInt8(0x00)])
+            else { halt("SPI setup failed") }
+            guard (try? spi.write([UInt8(0x00)])) != nil else { halt("SPI write failed") }
+            while true { sleep(1_000) }
+        }
+        @inline(__always) static func halt(_ message: String) -> Never {
+            Serial.println(message)
             while true { sleep(1_000) }
         }
     }
@@ -193,13 +225,19 @@ extension SwiftPicoCommand {
     @main
     struct InterruptExample {
         static func main() {
-            let pin = try! PicoPin(17)
+            guard let pin = try? PicoPin(17) else { halt("interrupt pin setup failed") }
             let interrupts = PicoInterrupts()
-            try! interrupts.enable(pin, edge: .falling)
+            guard (try? interrupts.enable(pin, edge: .falling)) != nil else {
+                halt("interrupt setup failed")
+            }
             while true {
                 if interrupts.takeEvents(for: pin) != 0 { /* handle in foreground */ }
                 sleepMicroseconds(100)
             }
+        }
+        @inline(__always) static func halt(_ message: String) -> Never {
+            Serial.println(message)
+            while true { sleep(1_000) }
         }
     }
     """
@@ -213,7 +251,10 @@ extension SwiftPicoCommand {
     struct WatchdogExample {
         static func main() {
             let watchdog = PicoWatchdog()
-            try! watchdog.enable(timeout: .seconds(5))
+            guard (try? watchdog.enable(timeout: .seconds(5))) != nil else {
+                Serial.println("watchdog setup failed")
+                while true { sleep(1_000) }
+            }
             while true {
                 watchdog.update()
                 sleep(1_000)

@@ -79,6 +79,8 @@ extension SwiftPicoCommand {
   }
 
   static func installPicoKitDependency(projectRoot: URL, config: PicoKitConfig) throws -> URL {
+    let cacheLock = try acquirePicoKitCacheLock(projectRoot: projectRoot)
+    defer { try? FileManager.default.removeItem(at: cacheLock) }
     let checkout = projectRoot.appendingPathComponent(".build/checkouts/PicoKit", isDirectory: true)
 
     if !FileManager.default.fileExists(
@@ -119,6 +121,23 @@ extension SwiftPicoCommand {
     }
     _ = try sharedPicoSDK(for: checkout)
     return checkout
+  }
+
+  private static func acquirePicoKitCacheLock(projectRoot: URL) throws -> URL {
+    let lock = projectRoot.appendingPathComponent(".build/.swiftpico-picokit-cache.lock")
+    try FileManager.default.createDirectory(
+      at: lock.deletingLastPathComponent(), withIntermediateDirectories: true)
+    for _ in 0..<120 {
+      do {
+        try FileManager.default.createDirectory(at: lock, withIntermediateDirectories: false)
+        return lock
+      } catch {
+        guard FileManager.default.fileExists(atPath: lock.path) else { throw error }
+        Thread.sleep(forTimeInterval: 0.25)
+      }
+    }
+    throw CLIError.message(
+      "timed out waiting for another SwiftPico process to finish PicoKit cache recovery at \(lock.path)")
   }
 
   /// PicoKit pins the SDK revision in a tiny tracked file. The full SDK is

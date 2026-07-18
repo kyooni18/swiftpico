@@ -84,6 +84,24 @@ extension SwiftPicoCommand {
     return updated
   }
 
+  static func addSwiftPMProductDependency(_ productDependency: String, to manifest: String) throws
+    -> String
+  {
+    guard let targetsRange = manifest.range(of: "targets: ["),
+      let dependenciesRange = manifest.range(
+        of: "dependencies: [", range: targetsRange.upperBound..<manifest.endIndex),
+      let closingBracket = manifest.range(
+        of: "]", range: dependenciesRange.upperBound..<manifest.endIndex)
+    else {
+      throw CLIError.message("could not update target dependencies in Package.swift")
+    }
+    var updated = manifest
+    updated.insert(
+      contentsOf: "\n                    \(productDependency),",
+      at: closingBracket.lowerBound)
+    return updated
+  }
+
   static func appendDependencyBlock(_ block: String, to file: URL) throws {
     let marker = "# Added by swiftpico add"
     let entry = "\(marker)\n\(block)\n"
@@ -120,5 +138,13 @@ extension SwiftPicoCommand {
       }
     }
     return true
+  }
+
+  static func isSwiftPackageIdentity(_ value: String) -> Bool {
+    guard !value.isEmpty, value != ".", value != "..",
+      !value.contains("/"), !value.contains("\\"),
+      !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+    else { return false }
+    return !value.contains("\"") && !value.contains(";") && !value.contains("$")
   }
 }

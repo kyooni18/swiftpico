@@ -46,6 +46,7 @@ struct FirmwareDependencyLock: Codable {
     var exactCommit: String
     var local: Bool
     var dirty: Bool
+    var toolchainCompatibility: String?
   }
 
   struct Resolution: Codable {
@@ -188,8 +189,7 @@ enum DependencySupport {
     }
     manifest.dependencies.removeAll { $0.name == name }
     try write(manifest, to: root.appendingPathComponent(manifestPath))
-    try? FileManager.default.removeItem(at: root.appendingPathComponent(lockPath))
-    try? FileManager.default.removeItem(at: root.appendingPathComponent(generatedPath))
+    try invalidateDerivedFiles(root: root)
     return removed
   }
 
@@ -201,8 +201,7 @@ enum DependencySupport {
     let old = manifest.dependencies[index]
     manifest.dependencies[index].revision = revision
     try write(manifest, to: root.appendingPathComponent(manifestPath))
-    try? FileManager.default.removeItem(at: root.appendingPathComponent(lockPath))
-    try? FileManager.default.removeItem(at: root.appendingPathComponent(generatedPath))
+    try invalidateDerivedFiles(root: root)
     return old
   }
 
@@ -221,13 +220,14 @@ enum DependencySupport {
     if let picoKitPath {
       let path = URL(fileURLWithPath: picoKitPath, relativeTo: root).standardizedFileURL.path
       let commit = try firstLine(run(["git", "-C", path, "rev-parse", "HEAD"]))
-      let dirty = !((try? run(["git", "-C", path, "status", "--porcelain"])) ?? "").isEmpty
+      let dirty = !(try run(["git", "-C", path, "status", "--porcelain"])).isEmpty
       picoResolution = .init(
         repositoryURL: path,
         requestedVersion: picoKitVersion,
         exactCommit: commit,
         local: true,
-        dirty: dirty
+        dirty: dirty,
+        toolchainCompatibility: toolchain
       )
     } else {
       picoResolution = .init(
@@ -235,7 +235,8 @@ enum DependencySupport {
         requestedVersion: picoKitVersion,
         exactCommit: try resolveRevision(url: picoKitURL, revision: "v\(picoKitVersion)"),
         local: false,
-        dirty: false
+        dirty: false,
+        toolchainCompatibility: toolchain
       )
     }
 
@@ -283,10 +284,26 @@ enum DependencySupport {
         ))
     }
     let lock = FirmwareDependencyLock(picoKit: picoResolution, dependencies: resolutions)
+    let lockURL = root.appendingPathComponent(lockPath)
+    let generatedURL = root.appendingPathComponent(generatedPath)
+    let temporaryLockURL = lockURL.deletingLastPathComponent().appendingPathComponent(
+      ".dependencies.lock.\(UUID().uuidString)")
+    let temporaryGeneratedURL = generatedURL.deletingLastPathComponent().appendingPathComponent(
+      ".Dependencies.cmake.\(UUID().uuidString)")
+    defer {
+      try? FileManager.default.removeItem(at: temporaryLockURL)
+      try? FileManager.default.removeItem(at: temporaryGeneratedURL)
+    }
     print("  Writing \(lockPath)…")
-    try write(lock, to: root.appendingPathComponent(lockPath))
+    try write(lock, to: temporaryLockURL)
     print("  Generating \(generatedPath)…")
-    try generate(root: root, manifest: manifest, lock: lock)
+    try generate(root: root, manifest: manifest, lock: lock, outputURL: temporaryGeneratedURL)
+    try installResolvedPair(
+      temporaryLockURL: temporaryLockURL,
+      temporaryGeneratedURL: temporaryGeneratedURL,
+      lockURL: lockURL,
+      generatedURL: generatedURL
+    )
     return lock
   }
 
@@ -294,6 +311,7 @@ enum DependencySupport {
     let manifest = try loadManifest(root: root)
     let lock: FirmwareDependencyLock = try load(root.appendingPathComponent(lockPath))
     try validate(manifest)
+    try validateLockIdentity(root: root, lock: lock)
     guard Set(manifest.dependencies.map(\.name)) == Set(lock.dependencies.map(\.name)) else {
       throw DependencySupportError.message(
         "dependencies.lock is stale; run 'swiftpico dependencies resolve'")
@@ -320,6 +338,47 @@ enum DependencySupport {
       }
     }
     try generate(root: root, manifest: manifest, lock: lock)
+  }
+
+  private static func validateLockIdentity(root: URL, lock: FirmwareDependencyLock) throws {
+    guard lock.schemaVersion == SwiftPicoVersion.lockSchema else {
+      throw DependencySupportError.message(
+        "unsupported dependencies.lock schemaVersion \(lock.schemaVersion); run 'swiftpico dependencies resolve'")
+    }
+    let configURL = root.appendingPathComponent("swiftpico.json")
+    guard FileManager.default.fileExists(atPath: configURL.path) else {
+      throw DependencySupportError.message(
+        "swiftpico.json is missing; cannot validate the PicoKit lock identity")
+    }
+    let config = try JSONDecoder().decode(
+      PicoKitConfig.self, from: Data(contentsOf: configURL))
+    let requestedVersion = config.picoKitVersion ?? SwiftPicoCommand.offlinePicoKitVersion
+    if let configuredPath = config.picoKitPath {
+      let path = URL(fileURLWithPath: configuredPath, relativeTo: root).standardizedFileURL.path
+      guard lock.picoKit.local, lock.picoKit.repositoryURL == path,
+        lock.picoKit.requestedVersion == requestedVersion
+      else {
+        throw DependencySupportError.message(
+          "dependencies.lock is stale for the configured local PicoKit checkout; run 'swiftpico dependencies resolve'")
+      }
+    } else {
+      let url = config.picoKitURL ?? SwiftPicoCommand.defaultPicoKitURL
+      guard !lock.picoKit.local, lock.picoKit.repositoryURL == url,
+        lock.picoKit.requestedVersion == requestedVersion
+      else {
+        throw DependencySupportError.message(
+          "dependencies.lock is stale for the configured PicoKit URL/version; run 'swiftpico dependencies resolve'")
+      }
+    }
+    let toolchain = try firstLine(run(["swiftc", "--version"]))
+    guard lock.picoKit.toolchainCompatibility == toolchain else {
+      throw DependencySupportError.message(
+        "dependencies.lock was generated with a different Swift toolchain; run 'swiftpico dependencies resolve'")
+    }
+    for resolution in lock.dependencies where resolution.toolchainCompatibility != toolchain {
+      throw DependencySupportError.message(
+        "dependencies.lock was generated with a different Swift toolchain; run 'swiftpico dependencies resolve'")
+    }
   }
 
   static func migrate(root: URL) throws {
@@ -352,6 +411,9 @@ enum DependencySupport {
     var modules = Set<String>()
     var resources = Set<String>()
     for dependency in manifest.dependencies {
+      guard !dependency.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw DependencySupportError.message("dependency name must not be empty")
+      }
       guard names.insert(dependency.name).inserted else {
         throw DependencySupportError.message("duplicate dependency name '\(dependency.name)'")
       }
@@ -381,15 +443,51 @@ enum DependencySupport {
         guard modules.insert(module).inserted else {
           throw DependencySupportError.message("duplicate Clang module '\(module)'")
         }
+        guard let umbrella = dependency.module?.umbrellaHeader,
+          PathSafety.isSafeDependencyPath(umbrella), isSafeCMakePath(umbrella)
+        else {
+          throw DependencySupportError.message(
+            "dependency '\(dependency.name)' requires a safe module umbrellaHeader")
+        }
       }
-      for resource in dependency.resources ?? [] where !resources.insert(resource).inserted {
-        throw DependencySupportError.message("resource ownership conflict for '\(resource)'")
+      for resource in dependency.resources ?? [] {
+        guard !resource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          !resource.contains("\n"), !resource.contains("\r")
+        else {
+          throw DependencySupportError.message(
+            "dependency '\(dependency.name)' has an invalid resource ownership key")
+        }
+        guard resources.insert(resource).inserted else {
+          throw DependencySupportError.message("resource ownership conflict for '\(resource)'")
+        }
       }
       guard !dependency.repositoryURL.isEmpty, !dependency.revision.isEmpty else {
         throw DependencySupportError.message(
           "dependency '\(dependency.name)' requires repositoryURL and revision")
       }
       _ = try sourceType(of: dependency)
+      switch dependency.integration {
+      case .cmakeTarget:
+        guard dependency.target != nil else {
+          throw DependencySupportError.message("\(dependency.name) requires target")
+        }
+      case .sources:
+        guard !(dependency.sources ?? []).isEmpty else {
+          throw DependencySupportError.message(
+            "\(dependency.name) source integration requires sources")
+        }
+      case .headerOnly:
+        break
+      case .swiftSources:
+        guard dependency.language == .swift,
+          let package = dependency.package, SwiftPicoCommand.isSwiftPackageIdentity(package),
+          let product = dependency.product, SwiftPicoCommand.isCMakeIdentifier(product),
+          let target = dependency.target, SwiftPicoCommand.isCMakeIdentifier(target)
+        else {
+          throw DependencySupportError.message(
+            "\(dependency.name) Swift integration requires package, product, and target")
+        }
+      }
       if let options = dependency.cmakeOptions {
         for key in options.keys
         where key.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) == nil {
@@ -409,9 +507,29 @@ enum DependencySupport {
         sourcePaths.append(cmakeSubdirectory)
       }
       for path in sourcePaths {
-        guard PathSafety.isSafeDependencyPath(path) else {
+        guard PathSafety.isSafeDependencyPath(path), isSafeCMakePath(path) else {
           throw DependencySupportError.message(
             "dependency '\(dependency.name)' path must stay inside its source: \(path)")
+        }
+      }
+      for adapter in dependency.adapters ?? [] {
+        guard PathSafety.isSafeDependencyPath(adapter), isSafeCMakePath(adapter) else {
+          throw DependencySupportError.message(
+            "dependency '\(dependency.name)' adapter must stay inside the project: \(adapter)")
+        }
+      }
+      for value in (dependency.compileDefinitions ?? []) + (dependency.compileOptions ?? []) {
+        guard isSafeCMakeValue(value) else {
+          throw DependencySupportError.message(
+            "dependency '\(dependency.name)' has an unsafe compiler argument")
+        }
+      }
+      if let optionValues = dependency.cmakeOptions?.values {
+        for value in optionValues {
+          guard isSafeCMakeValue(value) else {
+            throw DependencySupportError.message(
+              "dependency '\(dependency.name)' has an unsafe CMake option value")
+          }
         }
       }
       for board in dependency.boards ?? []
@@ -447,7 +565,8 @@ enum DependencySupport {
   private static func generate(
     root: URL,
     manifest: FirmwareDependencies,
-    lock: FirmwareDependencyLock
+    lock: FirmwareDependencyLock,
+    outputURL: URL? = nil
   ) throws {
     var output = """
       # Generated by swiftpico dependencies resolve. Do not edit.
@@ -575,10 +694,66 @@ enum DependencySupport {
       if !condition.isEmpty { output += "endif()\n" }
       output += "\n"
     }
-    let url = root.appendingPathComponent(generatedPath)
+    let url = outputURL ?? root.appendingPathComponent(generatedPath)
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try output.write(to: url, atomically: true, encoding: .utf8)
+  }
+
+  private static func installResolvedArtifact(from temporary: URL, to destination: URL) throws {
+    let manager = FileManager.default
+    try manager.createDirectory(
+      at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if manager.fileExists(atPath: destination.path) {
+      _ = try manager.replaceItemAt(destination, withItemAt: temporary)
+    } else {
+      try manager.moveItem(at: temporary, to: destination)
+    }
+  }
+
+  private static func installResolvedPair(
+    temporaryLockURL: URL,
+    temporaryGeneratedURL: URL,
+    lockURL: URL,
+    generatedURL: URL
+  ) throws {
+    let manager = FileManager.default
+    let previousLock = manager.fileExists(atPath: lockURL.path) ? try Data(contentsOf: lockURL) : nil
+    let previousGenerated = manager.fileExists(atPath: generatedURL.path)
+      ? try Data(contentsOf: generatedURL) : nil
+    do {
+      try installResolvedArtifact(from: temporaryLockURL, to: lockURL)
+      try installResolvedArtifact(from: temporaryGeneratedURL, to: generatedURL)
+    } catch {
+      restoreResolvedArtifact(previousLock, at: lockURL)
+      restoreResolvedArtifact(previousGenerated, at: generatedURL)
+      throw error
+    }
+  }
+
+  private static func restoreResolvedArtifact(_ data: Data?, at url: URL) {
+    let manager = FileManager.default
+    if let data {
+      try? manager.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? data.write(to: url, options: .atomic)
+    } else {
+      try? manager.removeItem(at: url)
+    }
+  }
+
+  private static func invalidateDerivedFiles(root: URL) throws {
+    let manager = FileManager.default
+    for relativePath in [lockPath, generatedPath] {
+      let url = root.appendingPathComponent(relativePath)
+      guard manager.fileExists(atPath: url.path) else { continue }
+      do {
+        try manager.removeItem(at: url)
+      } catch {
+        throw DependencySupportError.message(
+          "could not invalidate \(relativePath): \(error.localizedDescription)")
+      }
+    }
   }
 
   private static func appendCMakeOptions(_ dependency: FirmwareDependency, to output: inout String)
@@ -606,13 +781,27 @@ enum DependencySupport {
         "target_include_directories(\(target) \(visibility) \"${\(cmakeIdentifier(dependency.name))_SOURCE_DIR}/\(cmakeEscape(includeDirectory))\")\n"
     }
     if let definitions = dependency.compileDefinitions, !definitions.isEmpty {
-      output +=
-        "target_compile_definitions(\(target) \(visibility) \(definitions.map(cmakeEscape).joined(separator: " ")))\n"
+      let quotedDefinitions = definitions.map { "\"\(cmakeEscape($0))\"" }.joined(separator: " ")
+      output += "target_compile_definitions(\(target) \(visibility) \(quotedDefinitions))\n"
     }
     if let options = dependency.compileOptions, !options.isEmpty {
-      output +=
-        "target_compile_options(\(target) \(visibility == "INTERFACE" ? "INTERFACE" : "PRIVATE") \(options.map(cmakeEscape).joined(separator: " ")))\n"
+      let quotedOptions = options.map { "\"\(cmakeEscape($0))\"" }.joined(separator: " ")
+      let optionsVisibility = visibility == "INTERFACE" ? "INTERFACE" : "PRIVATE"
+      output += "target_compile_options(\(target) \(optionsVisibility) \(quotedOptions))\n"
     }
+  }
+
+  private static func isSafeCMakePath(_ value: String) -> Bool {
+    isSafeCMakeValue(value)
+  }
+
+  private static func isSafeCMakeValue(_ value: String) -> Bool {
+    !value.isEmpty
+      && !value.contains(";")
+      && !value.contains("$")
+      && !value.contains("\n")
+      && !value.contains("\r")
+      && !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
   }
 
   private static func sourceType(of dependency: FirmwareDependency) throws
@@ -645,33 +834,21 @@ enum DependencySupport {
     let candidates = [
       "refs/tags/\(revision)^{}", "refs/tags/\(revision)", "refs/heads/\(revision)", revision,
     ]
+    let output = try run(["git", "ls-remote", url] + candidates)
+    let commits = Dictionary(
+      output.split(whereSeparator: \.isNewline).compactMap { line -> (String, String)? in
+        let fields = line.split(whereSeparator: \.isWhitespace)
+        guard fields.count >= 2, fields[0].count == 40 else { return nil }
+        return (String(fields[1]), String(fields[0]).lowercased())
+      }, uniquingKeysWith: { first, _ in first })
     for candidate in candidates {
-      let output = try? run(["git", "ls-remote", url, candidate])
-      if let line = output?.split(whereSeparator: \.isNewline).first,
-        let commit = line.split(whereSeparator: \.isWhitespace).first,
-        commit.count == 40
-      {
-        return String(commit).lowercased()
-      }
+      if let commit = commits[candidate] { return commit }
     }
     throw DependencySupportError.message("could not resolve '\(revision)' from \(url)")
   }
 
   private static func run(_ command: [String]) throws -> String {
-    let process = Process()
-    let output = Pipe()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = command
-    process.standardOutput = output
-    process.standardError = output
-    try process.run()
-    process.waitUntilExit()
-    let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    guard process.terminationStatus == 0 else {
-      throw DependencySupportError.message(
-        "command failed: \(command.joined(separator: " "))\n\(text)")
-    }
-    return text
+    try SwiftPicoCommand.captureProcessOutput(command, timeout: 30)
   }
 
   private static func firstLine(_ value: String) throws -> String {

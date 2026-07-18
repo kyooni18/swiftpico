@@ -21,15 +21,35 @@ extension SwiftPicoCommand {
       guard ["debug", "release"].contains(configuration.lowercased()) else {
         throw CLIError.message("configuration must be 'debug' or 'release', not '\(configuration)'")
       }
-      guard
-        isToolAvailable("arm-none-eabi-gcc")
-          || ProcessInfo.processInfo.environment["PICO_TOOLCHAIN_PATH"] != nil
-      else {
+      let toolchainPath = ProcessInfo.processInfo.environment["PICO_TOOLCHAIN_PATH"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      if ProcessInfo.processInfo.environment["PICO_TOOLCHAIN_PATH"] != nil,
+        toolchainPath?.isEmpty != false
+      {
+        throw CLIError.message(
+          "PICO_TOOLCHAIN_PATH is empty. Unset it or set it to a directory containing arm-none-eabi-gcc.")
+      }
+      let configuredCompiler = toolchainPath.map {
+        URL(fileURLWithPath: $0).appendingPathComponent("bin/arm-none-eabi-gcc").path
+      }
+      let configuredFlatCompiler = toolchainPath.map {
+        URL(fileURLWithPath: $0).appendingPathComponent("arm-none-eabi-gcc").path
+      }
+      if let toolchainPath, !toolchainPath.isEmpty,
+        !FileManager.default.fileExists(atPath: toolchainPath)
+          || (!(configuredCompiler.map(FileManager.default.isExecutableFile(atPath:)) ?? false)
+            && !(configuredFlatCompiler.map(FileManager.default.isExecutableFile(atPath:)) ?? false))
+      {
+        throw CLIError.message(
+          "PICO_TOOLCHAIN_PATH is invalid: \(toolchainPath). Expected a directory containing bin/arm-none-eabi-gcc.")
+      }
+      guard isToolAvailable("arm-none-eabi-gcc") || configuredCompiler.map(FileManager.default.isExecutableFile(atPath:)) == true || configuredFlatCompiler.map(FileManager.default.isExecutableFile(atPath:)) == true else {
         throw CLIError.message(
           "arm-none-eabi-gcc was not found. Install the Pico SDK ARM toolchain or set PICO_TOOLCHAIN_PATH, then run 'swiftpico doctor'."
         )
       }
-      let firmwareURL = project.url(for: firmwareDirectory)
+      let firmwareURL = try project.projectBoundURL(
+        for: firmwareDirectory, label: "firmwareDirectory")
       let buildDirectory = firmwareURL.appendingPathComponent("build", isDirectory: true)
       let cmake = cmakeExecutable()
       let ninja = ninjaExecutable()
@@ -39,12 +59,24 @@ extension SwiftPicoCommand {
         "-DCMAKE_BUILD_TYPE=\(configuration.capitalized)",
         "-DPICO_BOARD=\(try canonicalBoard(config.board).cmakeName)",
       ]
-      let product = firmwareTargetName(
-        option("--product", in: arguments) ?? config.product ?? "PicoKitFirmware")
       let sourceName = option("--product", in: arguments) ?? config.product ?? "PicoKitFirmware"
+      guard sourceName.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else {
+        throw CLIError.message(
+          "invalid firmware product \(String(reflecting: sourceName)). Use letters, digits, '_' or '-' only.")
+      }
+      guard sourceName != ".", sourceName != ".." else {
+        throw CLIError.message("invalid firmware product \(String(reflecting: sourceName))")
+      }
+      let product = firmwareTargetName(sourceName)
+      let sourcesRoot = project.root.appendingPathComponent("Sources", isDirectory: true).standardizedFileURL
+      let sourceURL = sourcesRoot.appendingPathComponent(sourceName, isDirectory: true)
+        .appendingPathComponent("main.swift").standardizedFileURL
+      guard sourceURL.path.hasPrefix(sourcesRoot.path + "/") else {
+        throw CLIError.message("firmware product source must remain within Sources/")
+      }
       configure += [
         "-DPICOKIT_PRODUCT=\(product)",
-        "-DPICOKIT_SOURCE=\(project.root.appendingPathComponent("Sources/\(sourceName)/main.swift").path)",
+        "-DPICOKIT_SOURCE=\(sourceURL.path)",
       ]
       configure.append(
         "-DPICOKIT_ENABLE_USB=\(config.initializesUSBInterfaceAtStart ? "ON" : "OFF")")
@@ -129,7 +161,9 @@ extension SwiftPicoCommand {
     let config = project.config
     print("Cleaning build artifacts...")
     if let firmwareDirectory = config.firmwareDirectory {
-      let buildDirectory = project.url(for: firmwareDirectory)
+      let firmwareURL = try project.projectBoundURL(
+        for: firmwareDirectory, label: "firmwareDirectory")
+      let buildDirectory = firmwareURL
         .appendingPathComponent("build", isDirectory: true)
       if FileManager.default.fileExists(atPath: buildDirectory.path) {
         try FileManager.default.removeItem(at: buildDirectory)

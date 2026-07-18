@@ -32,13 +32,14 @@ extension SwiftPicoCommand {
     guard let uf2 else {
       throw CLIError.message("set 'uf2' in swiftpico.json or pass --uf2 path/to/app.uf2")
     }
-    let source = project.url(for: uf2)
+    let source = try project.projectBoundURL(for: uf2, label: "UF2 path")
     guard FileManager.default.fileExists(atPath: source.path) else {
       throw CLIError.message("UF2 file not found: \(source.path)")
     }
 
     if let requestedVolume = option("--volume", in: arguments).map({ project.url(for: $0) }) {
-      try copyUF2ToVolume(source, volume: requestedVolume)
+      try copyUF2ToVolume(
+        source, volume: requestedVolume, allowUnknownVolume: arguments.contains("--force-unknown-volume"))
       print("Flashed \(source.lastPathComponent) to \(requestedVolume.path)")
       try waitForApplication(config, bootVolume: requestedVolume)
       return
@@ -50,7 +51,12 @@ extension SwiftPicoCommand {
     // Resolve the board's current state before asking either USB stack to
     // transition it. This avoids a second reset while Disk Arbitration is
     // still publishing an already-mounted BOOTSEL device.
-    if let bootVolume = findBootVolume() {
+    let mountedBootVolumes = bootVolumes()
+    if mountedBootVolumes.count > 1 {
+      throw CLIError.message(
+        "multiple Pico BOOTSEL volumes are mounted (\(mountedBootVolumes.map(\.path).joined(separator: ", "))). Pass --volume to select one explicitly.")
+    }
+    if let bootVolume = mountedBootVolumes.first {
       try flashBootloader(source, volume: bootVolume, picotool: picotool)
       try waitForApplication(config, bootVolume: bootVolume)
       return
@@ -77,16 +83,22 @@ extension SwiftPicoCommand {
     var picotoolFailed = false
     if let picotool {
       print("Flashing \(source.lastPathComponent) over USB with picotool…")
+      var imageLoaded = false
       do {
         // This is the fallback for a board picotool can see but whose
         // BOOTSEL volume was not published. Keep BOOTSEL accessible
         // until the verified load is complete, then reboot explicitly.
         try runProcess([picotool, "load", "-F", "-v", source.path])
+        imageLoaded = true
         try runProcess([picotool, "reboot", "--application"])
         try waitForApplication(config)
         print("Flashed \(source.lastPathComponent) over USB.")
         return
       } catch {
+        if imageLoaded {
+          throw CLIError.message(
+            "picotool loaded \(source.lastPathComponent), but reboot or application readiness failed: \(error.localizedDescription). Do not reflash automatically; reset the board and verify its application serial interface.")
+        }
         picotoolFailed = true
         print("picotool could not enter BOOTSEL; falling back to USB serial reset…")
       }
@@ -121,10 +133,27 @@ extension SwiftPicoCommand {
     }
     var command = [openOCD] + files.flatMap { ["-f", $0] }
     if let target = option("--target", in: arguments) {
-      command += ["-c", "target remote \(target)"]
+      let endpoint = try validatedOpenOCDTarget(target)
+      command += ["-c", "target remote \(endpoint)"]
     }
     print("Starting OpenOCD: \(command.joined(separator: " "))")
     try runProcess(command, currentDirectory: project.root)
+  }
+
+  static func validatedOpenOCDTarget(_ value: String) throws -> String {
+    // OpenOCD's -c option is a command language. Accept only a conventional
+    // host:port endpoint (or bracketed IPv6:port), never embedded commands.
+    let hostname = "[A-Za-z0-9.-]+"
+    let ipv6 = "\\[[0-9A-Fa-f:]+\\]"
+    let pattern = "^(?:\(hostname)|\(ipv6)):[0-9]{1,5}$"
+    guard value.range(of: pattern, options: .regularExpression) != nil,
+      let portText = value.split(separator: ":").last,
+      let port = UInt16(portText), port > 0
+    else {
+      throw CLIError.message(
+        "invalid --target endpoint \(String(reflecting: value)). Use host:port or [ipv6]:port.")
+    }
+    return value
   }
 
 }

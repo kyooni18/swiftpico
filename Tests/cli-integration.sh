@@ -26,6 +26,7 @@ done
 progressProject="$tmp/progress"
 progressOutput=$("$cli" init --board pico --name Progress --template blink --path "$progressProject" --skip-resolve)
 printf '%s\n' "$progressOutput" | grep -q 'Starting SwiftPico project initialization'
+printf '%s\n' "$progressOutput" | grep -Fq "Destination: $progressProject"
 printf '%s\n' "$progressOutput" | grep -q 'Creating project configuration and source files'
 printf '%s\n' "$progressOutput" | grep -q 'Skipping dependency resolution'
 
@@ -49,6 +50,21 @@ test ! -e "$controlProject/swiftpico.json"
 ! grep -q '^feed' "$controlOutput"
 grep -q 'invalid project name' "$controlOutput"
 
+incompleteProject="$tmp/incomplete"
+mkdir -p "$incompleteProject/Sources/Incomplete"
+printf '%s\n' 'struct ExistingSource {}' >"$incompleteProject/Sources/Incomplete/main.swift"
+incompleteOutput="$tmp/incomplete.log"
+if "$cli" init --board pico --name Incomplete --template blink --path "$incompleteProject" --skip-resolve >"$incompleteOutput" 2>&1; then
+    echo "incomplete project unexpectedly succeeded without --force" >&2
+    exit 1
+fi
+test ! -e "$incompleteProject/swiftpico.json"
+grep -q 'incomplete SwiftPico project' "$incompleteOutput"
+"$cli" init --board pico --name Incomplete --template blink --path "$incompleteProject" --skip-resolve --force
+for generated in swiftpico.json Package.swift Firmware/CMakeLists.txt Firmware/dependencies.json Firmware/Interop/AppInterop.h Firmware/Interop/Callbacks.h swiftpico .gitignore Sources/Incomplete/main.swift; do
+    test -f "$incompleteProject/$generated"
+done
+
 grep -q 'github.com/kyooni18/PicoKit.git' "$tmp/serial/Package.swift"
 grep -q 'PICO_SDK_PATH must point to the shared Pico SDK' "$tmp/serial/Firmware/CMakeLists.txt"
 ! grep -q 'Vendor/pico-sdk' "$tmp/serial/Firmware/CMakeLists.txt"
@@ -71,6 +87,13 @@ grep -Fq '"picoKitPath"' "$localKitProject/swiftpico.json"
 grep -Fq 'PicoKit' "$localKitProject/swiftpico.json"
 test -f "$localKitProject/Firmware/dependencies.lock"
 grep -Fq '"exactCommit"' "$localKitProject/Firmware/dependencies.lock"
+perl -pi -e 's/"picoKitVersion"\s*:\s*"0\.2\.13"/"picoKitVersion" : "0.2.14"/' "$localKitProject/swiftpico.json"
+staleLockOutput="$tmp/stale-lock.log"
+if "$cli" dependencies generate --context "$localKitProject/swiftpico.json" >"$staleLockOutput" 2>&1; then
+    echo "stale PicoKit lock unexpectedly regenerated" >&2
+    exit 1
+fi
+grep -q 'stale for the configured local PicoKit checkout' "$staleLockOutput"
 
 libraryProject="$tmp/libraries"
 "$cli" init --board pico --name LibraryTest --template blink --path "$libraryProject" --skip-resolve
@@ -80,6 +103,18 @@ libraryProject="$tmp/libraries"
 grep -Fq '.package(name: "EmbeddedMath", url: "https://github.com/example/EmbeddedMath.git", exact: "1.0.0")' "$libraryProject/Package.swift"
 grep -Fq '.product(name: "EmbeddedMath", package: "EmbeddedMath")' "$libraryProject/Package.swift"
 grep -Fq '"integration" : "swiftSources"' "$libraryProject/Firmware/dependencies.json"
+beforeInvalidPackage=$(shasum -a 256 "$libraryProject/Package.swift" "$libraryProject/Firmware/dependencies.json")
+if "$cli" add swift --context "$libraryProject/swiftpico.json" \
+    --url https://github.com/example/EmbeddedMath.git --from 1.0.0 \
+    --package ../escape --product InvalidProduct --target InvalidProduct --skip-resolve >"$tmp/invalid-package.log" 2>&1; then
+    echo "unsafe Swift package identity unexpectedly accepted" >&2
+    exit 1
+fi
+test "$beforeInvalidPackage" = "$(shasum -a 256 "$libraryProject/Package.swift" "$libraryProject/Firmware/dependencies.json")"
+"$cli" add swift --context "$libraryProject/swiftpico.json" \
+    --url https://github.com/example/EmbeddedMath.git --from 1.0.0 \
+    --package EmbeddedMath --product EmbeddedMathExtras --target EmbeddedMathExtras --skip-resolve
+grep -Fq '.product(name: "EmbeddedMathExtras", package: "EmbeddedMath")' "$libraryProject/Package.swift"
 "$cli" add c --context "$libraryProject/swiftpico.json" \
     --url https://github.com/example/tiny-driver.git --tag v1.2.0 --target tiny_driver --skip-resolve
 grep -Fq '"name" : "tiny_driver"' "$libraryProject/Firmware/dependencies.json"
@@ -93,6 +128,9 @@ grep -Fq '"target" : "Vendor::driver"' "$libraryProject/Firmware/dependencies.js
 "$cli" dependencies remove vendor_driver --context "$libraryProject/swiftpico.json"
 ! grep -Fq '"name" : "vendor_driver"' "$libraryProject/Firmware/dependencies.json"
 "$cli" dependencies remove EmbeddedMath --context "$libraryProject/swiftpico.json"
+grep -Fq '.package(name: "EmbeddedMath"' "$libraryProject/Package.swift"
+grep -Fq 'EmbeddedMathExtras' "$libraryProject/Package.swift"
+"$cli" dependencies remove EmbeddedMathExtras --context "$libraryProject/swiftpico.json"
 ! grep -Fq 'EmbeddedMath' "$libraryProject/Package.swift"
 
 migrationProject="$tmp/migration"
@@ -124,5 +162,13 @@ grep -qx '\-v' "$SWIFTPICO_TEST_LOG"
 grep -qx "$flashProject/Firmware/build/FlashTest.uf2" "$SWIFTPICO_TEST_LOG"
 grep -qx 'reboot' "$SWIFTPICO_TEST_LOG"
 grep -qx '\-\-application' "$SWIFTPICO_TEST_LOG"
+
+rm -f "$flashProject/Firmware/dependencies.json"
+toolchainOutput="$tmp/empty-toolchain.log"
+if PICO_TOOLCHAIN_PATH= "$cli" build --context "$flashProject/swiftpico.json" >"$toolchainOutput" 2>&1; then
+    echo "empty PICO_TOOLCHAIN_PATH unexpectedly accepted" >&2
+    exit 1
+fi
+grep -q 'PICO_TOOLCHAIN_PATH is empty' "$toolchainOutput"
 
 echo "SwiftPico CLI integration passed"

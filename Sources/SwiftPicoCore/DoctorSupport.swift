@@ -71,7 +71,11 @@ extension SwiftPicoCommand {
     print(
       "  Serial:      \(detectedSerialDevices.joined(separator: ", ").isEmpty ? "none" : detectedSerialDevices.joined(separator: ", "))"
     )
-    try reportCallbackProbe()
+    do {
+      try reportCallbackProbe()
+    } catch {
+      print("  Callback probe: unavailable (\(error.localizedDescription))")
+    }
   }
 
   static func reportCallbackProbe() throws {
@@ -132,19 +136,12 @@ extension SwiftPicoCommand {
   }
 
   static func reportTool(_ executable: String, arguments: [String]) {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [executable] + arguments
-    let output = Pipe()
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
     do {
-      try process.run()
-      process.waitUntilExit()
+      let output = try captureProcessOutput([executable] + arguments, timeout: 5)
       let firstLine =
-        String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        output
         .split(separator: "\n").first.map(String.init) ?? ""
-      print("  \(executable): \(process.terminationStatus == 0 ? firstLine : "MISSING")")
+      print("  \(executable): \(firstLine)")
     } catch {
       print("  \(executable): MISSING")
     }

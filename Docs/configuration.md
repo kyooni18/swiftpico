@@ -9,7 +9,7 @@ written configuration is:
   "board": "pico",
   "firmwareDirectory": "Firmware",
   "picoKitURL": "https://github.com/kyooni18/PicoKit.git",
-  "picoKitVersion": "0.2.12",
+  "picoKitVersion": "0.2.13",
   "product": "Blink",
   "configuration": "release",
   "uf2": "Firmware/build/Blink.uf2",

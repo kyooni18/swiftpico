@@ -36,26 +36,34 @@ extension SwiftPicoCommand {
       URL(fileURLWithPath: $0, relativeTo: currentDirectory).standardizedFileURL
     }
     let skipResolve = arguments.contains("--skip-resolve")
-    print("Starting SwiftPico project initialization…")
-    print("  Board: \(board)")
-    print("  Name: \(name)")
-    print("  Template: \(template)")
-    print("  Destination: \(currentDirectory.appendingPathComponent(name).path)")
-    // Project creation is deterministic: it never asks the network for a
-    // newer tag. Version changes are an explicit dependency operation.
-    let picoKitVersion = option("--pico-kit-version", in: arguments) ?? Self.offlinePicoKitVersion
     let projectRoot: URL
     if let path = option("--path", in: arguments) {
       projectRoot = URL(fileURLWithPath: path, relativeTo: currentDirectory).standardizedFileURL
     } else {
       projectRoot = currentDirectory.appendingPathComponent(name, isDirectory: true)
     }
-    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
-
     let configURL = projectRoot.appendingPathComponent("swiftpico.json")
+    let sourceFile = projectRoot.appendingPathComponent("Sources").appendingPathComponent(name)
+      .appendingPathComponent("main.swift")
+    // Do all conflict detection before creating or replacing generated files.
+    // In particular, an existing source without a configuration is an
+    // incomplete project, not permission to write half of a new one around it.
     guard force || !FileManager.default.fileExists(atPath: configURL.path) else {
       throw CLIError.message("swiftpico.json already exists. Use --force to overwrite.")
     }
+    guard force || !FileManager.default.fileExists(atPath: sourceFile.path) else {
+      throw CLIError.message(
+        "incomplete SwiftPico project: source file already exists at \(sourceFile.path). Use --force to repair it.")
+    }
+    print("Starting SwiftPico project initialization…")
+    print("  Board: \(board)")
+    print("  Name: \(name)")
+    print("  Template: \(template)")
+    print("  Destination: \(projectRoot.path)")
+    // Project creation is deterministic: it never asks the network for a
+    // newer tag. Version changes are an explicit dependency operation.
+    let picoKitVersion = option("--pico-kit-version", in: arguments) ?? Self.offlinePicoKitVersion
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
 
     let target = firmwareTargetName(name)
     let config = PicoKitConfig(
@@ -91,12 +99,6 @@ extension SwiftPicoCommand {
 
     let sourceDir = projectRoot.appendingPathComponent("Sources").appendingPathComponent(name)
     try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
-    let sourceFile = sourceDir.appendingPathComponent("main.swift")
-
-    guard !FileManager.default.fileExists(atPath: sourceFile.path) || force else {
-      print("Source file already exists at \(sourceFile.path)")
-      return
-    }
 
     let sourceCode = templateSource(template: template, board: board, name: name)
     try sourceCode.write(to: sourceFile, atomically: true, encoding: .utf8)

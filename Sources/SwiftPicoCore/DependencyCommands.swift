@@ -33,9 +33,9 @@ extension SwiftPicoCommand {
         "swift library requires --url URL --from VERSION --package PACKAGE --product PRODUCT")
     }
     let target = option("--target", in: arguments) ?? product
-    guard isCMakeIdentifier(product), isCMakeIdentifier(target) else {
+    guard isCMakeIdentifier(product), isCMakeIdentifier(target), isSwiftPackageIdentity(package) else {
       throw CLIError.message(
-        "--product and --target must contain only letters, numbers, or underscores")
+        "--package must be a single safe package identity; --product and --target must contain only letters, numbers, or underscores")
     }
 
     let manifestURL = project.root.appendingPathComponent("Package.swift")
@@ -44,19 +44,24 @@ extension SwiftPicoCommand {
       ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(url)), exact: \(swiftStringLiteral(version)))"
     let productDependency =
       ".product(name: \(swiftStringLiteral(product)), package: \(swiftStringLiteral(package)))"
-    if !manifest.contains(dependency) {
-      manifest = try addSwiftPMDependency(
-        dependency, productDependency: productDependency, to: manifest)
-      try manifest.write(to: manifestURL, atomically: true, encoding: .utf8)
-    }
+    try withDependencyFileRollback(projectRoot: project.root) {
+      if !manifest.contains(dependency) {
+        manifest = try addSwiftPMDependency(
+          dependency, productDependency: productDependency, to: manifest)
+        try manifest.write(to: manifestURL, atomically: true, encoding: .utf8)
+      } else if !manifest.contains(productDependency) {
+        manifest = try addSwiftPMProductDependency(productDependency, to: manifest)
+        try manifest.write(to: manifestURL, atomically: true, encoding: .utf8)
+      }
 
-    try DependencySupport.addSwiftDependency(
-      root: project.root, name: product, url: url, revision: version,
-      package: package, product: product, target: target
-    )
-    if !arguments.contains("--skip-resolve") {
-      try runProcess(["swift", "package", "resolve"], currentDirectory: project.root)
-      try resolveDependencies(project)
+      try DependencySupport.addSwiftDependency(
+        root: project.root, name: product, url: url, revision: version,
+        package: package, product: product, target: target
+      )
+      if !arguments.contains("--skip-resolve") {
+        try runProcess(["swift", "package", "resolve"], currentDirectory: project.root)
+        try resolveDependencies(project)
+      }
     }
     print(
       "Added Swift library \(product). Import \(product) from Sources/ and run swiftpico build.")
@@ -113,9 +118,12 @@ extension SwiftPicoCommand {
       guard arguments.count >= 2, !arguments[1].hasPrefix("--") else {
         throw CLIError.message("usage: swiftpico dependencies remove NAME")
       }
-      let removed = try DependencySupport.remove(root: project.root, name: arguments[1])
-      if removed.language == .swift, let package = removed.package, let product = removed.product {
-        try removeSwiftPMDependency(package: package, product: product, projectRoot: project.root)
+      _ = try withDependencyFileRollback(projectRoot: project.root) {
+        let removed = try DependencySupport.remove(root: project.root, name: arguments[1])
+        if removed.language == .swift, let package = removed.package, let product = removed.product {
+          try removeSwiftPMDependency(package: package, product: product, projectRoot: project.root)
+        }
+        return removed
       }
       print("Removed \(arguments[1]); run 'swiftpico dependencies resolve' before building.")
     case "update":
@@ -124,18 +132,21 @@ extension SwiftPicoCommand {
       else {
         throw CLIError.message("usage: swiftpico dependencies update NAME --revision REVISION")
       }
-      let old = try DependencySupport.update(
-        root: project.root, name: arguments[1], revision: revision)
-      if old.language == .swift, let package = old.package {
-        let packageURL = project.root.appendingPathComponent("Package.swift")
-        var manifest = try String(contentsOf: packageURL, encoding: .utf8)
-        manifest = manifest.replacingOccurrences(
-          of:
-            ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(old.repositoryURL)), exact: \(swiftStringLiteral(old.revision)))",
-          with:
-            ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(old.repositoryURL)), exact: \(swiftStringLiteral(revision)))"
-        )
-        try manifest.write(to: packageURL, atomically: true, encoding: .utf8)
+      _ = try withDependencyFileRollback(projectRoot: project.root) {
+        let old = try DependencySupport.update(
+          root: project.root, name: arguments[1], revision: revision)
+        if old.language == .swift, let package = old.package {
+          let packageURL = project.root.appendingPathComponent("Package.swift")
+          var manifest = try String(contentsOf: packageURL, encoding: .utf8)
+          manifest = manifest.replacingOccurrences(
+            of:
+              ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(old.repositoryURL)), exact: \(swiftStringLiteral(old.revision)))",
+            with:
+              ".package(name: \(swiftStringLiteral(package)), url: \(swiftStringLiteral(old.repositoryURL)), exact: \(swiftStringLiteral(revision)))"
+          )
+          try manifest.write(to: packageURL, atomically: true, encoding: .utf8)
+        }
+        return old
       }
       print("Updated \(arguments[1]) intent to \(revision); run 'swiftpico dependencies resolve'.")
     case "migrate":
@@ -169,10 +180,42 @@ extension SwiftPicoCommand {
     let packagePrefix = ".package(name: \(swiftStringLiteral(package)),"
     let productEntry =
       ".product(name: \(swiftStringLiteral(product)), package: \(swiftStringLiteral(package)))"
+    let remainingUses = try? DependencySupport.loadManifest(root: projectRoot).dependencies.contains {
+      $0.language == .swift && $0.package == package
+    }
     let filtered = manifest.split(separator: "\n", omittingEmptySubsequences: false).filter {
-      !$0.contains(packagePrefix) && !$0.contains(productEntry)
+      !$0.contains(productEntry) && (remainingUses == true || !$0.contains(packagePrefix))
     }.joined(separator: "\n")
     try filtered.write(to: url, atomically: true, encoding: .utf8)
+  }
+
+  private static func withDependencyFileRollback<T>(projectRoot: URL, operation: () throws -> T)
+    throws -> T
+  {
+    let manager = FileManager.default
+    let urls = [
+      projectRoot.appendingPathComponent("Package.swift"),
+      projectRoot.appendingPathComponent(DependencySupport.manifestPath),
+      projectRoot.appendingPathComponent(DependencySupport.lockPath),
+      projectRoot.appendingPathComponent(DependencySupport.generatedPath),
+    ]
+    let snapshots = try urls.map { url -> (URL, Data?) in
+      (url, manager.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil)
+    }
+    do {
+      return try operation()
+    } catch {
+      for (url, data) in snapshots {
+        if let data {
+          try? manager.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+          try? data.write(to: url, options: .atomic)
+        } else {
+          try? manager.removeItem(at: url)
+        }
+      }
+      throw error
+    }
   }
 
 }

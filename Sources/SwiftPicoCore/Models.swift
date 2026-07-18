@@ -191,6 +191,22 @@ struct ProjectContext {
       ? URL(fileURLWithPath: path)
       : root.appendingPathComponent(path).standardizedFileURL
   }
+
+  func projectBoundURL(for path: String, label: String) throws -> URL {
+    guard PathSafety.isSafeDependencyPath(path) else {
+      throw CLIError.message(
+        "(label) must be a relative path inside the project: (String(reflecting: path))")
+    }
+    let resolved = root.appendingPathComponent(path).standardizedFileURL
+    let realRoot = root.resolvingSymlinksInPath().standardizedFileURL
+    let realResolved = resolved.resolvingSymlinksInPath().standardizedFileURL
+    guard realResolved.path == realRoot.path
+      || realResolved.path.hasPrefix(realRoot.path + "/")
+    else {
+      throw CLIError.message("(label) escapes the project: (resolved.path)")
+    }
+    return resolved
+  }
 }
 
 enum CLIError: LocalizedError {

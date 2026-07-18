@@ -22,8 +22,10 @@ extension SwiftPicoCommand {
     print("  OpenOCD:     \(config.openOCD)")
     print("  OpenOCD cfg: \(config.openOCDConfig.joined(separator: ", "))")
 
-    if let uf2 = config.uf2, FileManager.default.fileExists(atPath: project.url(for: uf2).path) {
-      let attrs = try FileManager.default.attributesOfItem(atPath: project.url(for: uf2).path)
+    if let uf2 = config.uf2 {
+      let uf2URL = try project.projectBoundURL(for: uf2, label: "UF2 path")
+      guard FileManager.default.fileExists(atPath: uf2URL.path) else { return }
+      let attrs = try FileManager.default.attributesOfItem(atPath: uf2URL.path)
       if let size = attrs[.size] as? Int {
         print(
           "  UF2 size:    \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))"
@@ -52,7 +54,7 @@ extension SwiftPicoCommand {
       build, b [--configuration debug|release] [--swift-sdk SDK] [--product P]
               Build the firmware
       clean, c Remove build artifacts
-      flash, f [--uf2 PATH] [--volume PATH]
+      flash, f [--uf2 PATH] [--volume PATH] [--force-unknown-volume]
               Flash over USB with picotool or USB CDC reset; --volume uses
               mounted BOOTSEL storage explicitly
       upload  Alias for flash

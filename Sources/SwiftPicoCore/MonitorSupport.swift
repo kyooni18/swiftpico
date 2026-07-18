@@ -120,6 +120,7 @@ final class SerialTrafficStats: @unchecked Sendable {
 final class SerialConnection: @unchecked Sendable {
   private let lock = NSLock()
   private var descriptor: Int32 = -1
+  private var generation: UInt64 = 0
 
   func open(_ device: String, baud: speed_t) throws {
     // An ordinary open of a macOS USB modem may wait indefinitely for
@@ -135,15 +136,10 @@ final class SerialConnection: @unchecked Sendable {
       closeSerialWriter(replacement)
       throw error
     }
-    let flags = fcntl(replacement, F_GETFL)
-    guard flags >= 0, fcntl(replacement, F_SETFL, flags & ~O_NONBLOCK) == 0 else {
-      let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-      closeSerialWriter(replacement)
-      throw error
-    }
     lock.lock()
     let previous = descriptor
     descriptor = replacement
+    generation &+= 1
     lock.unlock()
     if previous >= 0 { closeSerialWriter(previous) }
   }
@@ -152,6 +148,7 @@ final class SerialConnection: @unchecked Sendable {
     lock.lock()
     let previous = descriptor
     descriptor = -1
+    generation &+= 1
     lock.unlock()
     if previous >= 0 { closeSerialWriter(previous) }
   }
@@ -159,21 +156,39 @@ final class SerialConnection: @unchecked Sendable {
   func read() -> Data? {
     lock.lock()
     let current = descriptor
+    let operationDescriptor = current >= 0 ? dup(current) : -1
+    let operationGeneration = generation
     lock.unlock()
-    guard current >= 0 else { return nil }
+    guard operationDescriptor >= 0 else { return nil }
+    defer { closeSerialWriter(operationDescriptor) }
 
     var buffer = [UInt8](repeating: 0, count: 1024)
     while true {
+      lock.lock()
+      let stillCurrent = generation == operationGeneration && descriptor >= 0
+      lock.unlock()
+      guard stillCurrent else { return nil }
+
+      var readiness = pollfd(
+        fd: operationDescriptor, events: Int16(POLLIN), revents: 0)
+      let pollResult = poll(&readiness, 1, 100)
+      if pollResult < 0 {
+        if errno == EINTR { continue }
+        return nil
+      }
+      if pollResult == 0 { continue }
+      if readiness.revents & Int16(POLLERR | POLLHUP | POLLNVAL) != 0 { return nil }
       let count = buffer.withUnsafeMutableBytes { bytes in
         #if os(Linux)
-          Glibc.read(current, bytes.baseAddress, bytes.count)
+          Glibc.read(operationDescriptor, bytes.baseAddress, bytes.count)
         #else
-          Darwin.read(current, bytes.baseAddress, bytes.count)
+          Darwin.read(operationDescriptor, bytes.baseAddress, bytes.count)
         #endif
       }
       if count > 0 { return Data(buffer.prefix(Int(count))) }
       if count == 0 { return nil }
-      if errno != EINTR { return nil }
+      if errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK { continue }
+      return nil
     }
   }
 
@@ -189,20 +204,41 @@ final class SerialConnection: @unchecked Sendable {
   @discardableResult
   func write(_ data: Data, offset: inout Int) -> Bool {
     lock.lock()
-    defer { lock.unlock() }
-    guard descriptor >= 0 else { return false }
+    let operationDescriptor = descriptor >= 0 ? dup(descriptor) : -1
+    let operationGeneration = generation
+    lock.unlock()
+    guard operationDescriptor >= 0 else { return false }
+    defer { closeSerialWriter(operationDescriptor) }
     var succeeded = true
     data.withUnsafeBytes { bytes in
       while offset < bytes.count {
+        lock.lock()
+        let stillCurrent = generation == operationGeneration && descriptor >= 0
+        lock.unlock()
+        guard stillCurrent else { succeeded = false; return }
+
+        var readiness = pollfd(
+          fd: operationDescriptor, events: Int16(POLLOUT), revents: 0)
+        let pollResult = poll(&readiness, 1, 100)
+        if pollResult < 0 {
+          if errno == EINTR { continue }
+          succeeded = false
+          return
+        }
+        if pollResult == 0 { continue }
+        if readiness.revents & Int16(POLLERR | POLLHUP | POLLNVAL) != 0 {
+          succeeded = false
+          return
+        }
         let count: Int
         #if os(Linux)
-          count = Glibc.write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
+          count = Glibc.write(operationDescriptor, bytes.baseAddress! + offset, bytes.count - offset)
         #else
-          count = Darwin.write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
+          count = Darwin.write(operationDescriptor, bytes.baseAddress! + offset, bytes.count - offset)
         #endif
         if count > 0 {
           offset += count
-        } else if count < 0 && errno == EINTR {
+        } else if count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
           continue
         } else {
           succeeded = false

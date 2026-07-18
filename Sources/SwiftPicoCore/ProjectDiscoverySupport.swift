@@ -26,17 +26,37 @@ extension SwiftPicoCommand {
       try validateLibraryArguments(Array(arguments.dropFirst()))
       return
     }
-    let valued: Set<String> = [
-      "--board", "--name", "--template", "--path", "--configuration", "--swift-sdk", "--product",
-      "--uf2", "--volume", "--picotool", "--openocd", "--target", "--device", "--baud", "--context",
-      "--pico-kit-url", "--pico-kit-version", "--pico-kit-path",
+    let canonicalCommand: [String: String] = [
+      "new": "init", "b": "build", "f": "flash", "m": "make", "c": "clean",
+      "mon": "monitor", "diagnose": "doctor", "help": "help", "--help": "help", "-h": "help",
     ]
-    let flags: Set<String> = ["--force", "--verbose", "--reconnect", "--skip-resolve"]
+    let schemas: [String: (valued: Set<String>, flags: Set<String>)] = [
+      "init": (["--board", "--name", "--template", "--path", "--pico-kit-url", "--pico-kit-version", "--pico-kit-path"], ["--force", "--skip-resolve"]),
+      "build": (["--configuration", "--swift-sdk", "--product", "--context"], ["--verbose"]),
+      "clean": (["--context"], []),
+      "flash": (["--uf2", "--volume", "--picotool", "--context"], ["--force-unknown-volume"]),
+      "upload": (["--uf2", "--volume", "--picotool", "--context"], ["--force-unknown-volume"]),
+      "debug": (["--openocd", "--target", "--context"], []),
+      "monitor": (["--device", "--baud", "--context"], ["--reconnect"]),
+      "serial": (["--device", "--baud", "--context"], ["--reconnect"]),
+      "info": (["--context"], []),
+      "doctor": ([], []), "devices": ([], []), "list": ([], []), "template": ([], []), "help": ([], []),
+      "make": (["--configuration", "--swift-sdk", "--product", "--context", "--uf2", "--volume", "--picotool"], ["--verbose", "--force-unknown-volume"]),
+    ]
+    guard let schema = schemas[canonicalCommand[command] ?? command] else {
+      throw CLIError.message("unsupported command '\(command)'")
+    }
+    let valued = schema.valued
+    let flags = schema.flags
+    var seen = Set<String>()
     var index = 0
     while index < arguments.count {
       let argument = arguments[index]
       guard argument.hasPrefix("--") else {
         throw CLIError.message("unexpected argument '\(argument)' for \(command)")
+      }
+      guard seen.insert(argument).inserted else {
+        throw CLIError.message("duplicate option '\(argument)' for \(command)")
       }
       if valued.contains(argument) {
         guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else {
