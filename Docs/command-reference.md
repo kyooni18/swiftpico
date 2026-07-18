@@ -94,3 +94,16 @@ swiftpico dependencies migrate
 `add swift` updates both `Package.swift` and firmware metadata. `add c` and
 `add cpp` record a CMake target. `resolve` selects exact commits and regenerates
 the lock and CMake files. `generate` only regenerates CMake from the lock.
+
+## Context, aliases, and failure behavior
+
+`new`, `b`, `f`, `upload`, `m`, `c`, `serial`, `mon`, `diagnose`, and `deps` are
+aliases shown in the sections above; they do not create a second implementation
+or a different project format. Project-aware commands accept `--context PATH`
+where the implementation needs a JSON context. `devices`, `template`, `help`,
+and `monitor` can operate without a project context.
+
+On failure SwiftPico reports a stage (`configure`, `compile`, `flash`, or
+`monitor`) and a recovery command. Treat the first reported stage as the host
+boundary to investigate; a later CMake or linker message may only be a
+consequence of the first error.

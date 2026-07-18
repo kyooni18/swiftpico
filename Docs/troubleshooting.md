@@ -71,6 +71,20 @@ and place declarations in `Firmware/Interop/AppInterop.h` or a module under
 `Firmware/Interop/Modules/`. Expose C++ through an `extern "C"` adapter rather
 than importing an arbitrary CMake target directly into Swift.
 
+## Evaluate before changing anything
+
+Capture the exact command, project context, board state from `swiftpico devices`,
+and the first stage failure. Then classify it:
+
+- no context, schema, or missing file: project discovery/configuration;
+- missing compiler, SDK, CMake, or lock: host environment/resolution;
+- compiler or linker error: source, ABI, or dependency integration;
+- BOOTSEL or serial disappearance: USB/reset ownership and enumeration;
+- valid flash but wrong behavior: firmware runtime, wiring, or protocol.
+
+This classification keeps a source error from being “fixed” by changing flash
+commands and keeps a USB symptom from being misreported as a PicoKit API bug.
+
 ## Existing projects and schema errors
 
 `swiftpico.json already exists` protects existing source and configuration; use

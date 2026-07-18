@@ -63,3 +63,15 @@ resource ownership.
 `dependencies.lock` is the reproducibility boundary. Change intent and run
 `swiftpico dependencies resolve`; `Firmware/Generated/Dependencies.cmake` is
 derived from that lock and should be regenerated rather than edited directly.
+## Resolution precedence
+
+For the SDK, an explicit `picoSDKPath` wins over the shared cache. For PicoKit,
+`picoKitPath` selects a local checkout; otherwise `picoKitURL` and the exact
+`picoKitVersion` select the package release. Command-line overrides win over
+configuration for build configuration, product, SDK, UF2, picotool, OpenOCD,
+device, baud, and volume. Relative paths resolve from the project context file,
+not from the shell's current directory.
+
+Keep paths and versions explicit in committed project configuration. Environment
+overrides such as `SWIFTPICO_CACHE_DIR` are useful for CI placement, but should
+not be the only record of which SDK or dependency a project needs.

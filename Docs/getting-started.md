@@ -149,6 +149,20 @@ swiftpico monitor --device /dev/cu.usbmodemXXXX --baud 115200 --reconnect
 `--reconnect` is useful after flashing because USB CDC disappears briefly and
 re-enumerates. Without it, the monitor exits when the device disconnects.
 
+## What success means at each step
+
+| Step | Evidence | Next failure boundary |
+| --- | --- | --- |
+| `doctor` | host tools and project state are discoverable | installation or configuration |
+| `build` | a board-specific UF2 exists | Swift/CMake/linker/toolchain |
+| `flash` | the image was delivered and the board returned | USB/BOOTSEL/reset |
+| `monitor` | CDC bytes can be exchanged | firmware output or serial ownership |
+| application test | the external device behaves as expected | wiring, voltage, protocol, or driver |
+
+Keep the first successful `serial` project as a USB baseline. When a richer
+application fails, compare it with that baseline before changing flash or
+monitor mechanisms.
+
 ## 7. The one-command loop
 
 After editing source, this is convenient:

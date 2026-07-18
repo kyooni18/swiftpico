@@ -4,6 +4,20 @@ SwiftPico keeps application dependencies outside PicoKit. This lets a project
 use a sensor, display, filesystem, or protocol library without changing the
 core package.
 
+## Integration choice matrix
+
+| Library shape | SwiftPico entry | Swift boundary |
+| --- | --- | --- |
+| Embedded Swift package | `add swift` | normal Swift import |
+| CMake C target | `add c` | C header/module or adapter |
+| CMake C++ target | `add cpp` | `extern \"C\"` adapter |
+| source-only archive | `integration: sources` | application-owned C source |
+| header-only vendor code | source metadata plus adapter | narrow C/C++ wrapper |
+
+The target name is a build-system name; it is not automatically a Swift module
+name. The adapter/module map is the application-facing API and should expose
+only the stable operations the firmware needs.
+
 ## Embedded Swift package
 
 ```sh

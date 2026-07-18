@@ -2,6 +2,11 @@
 
 SwiftPico is the command-line companion to [PicoKit](https://github.com/kyooni18/PicoKit). It creates Pico firmware projects, builds them with Embedded Swift, flashes them over USB, and provides an interactive serial terminal.
 
+Think of SwiftPico as the host workflow layer, not the firmware API. It owns
+project discovery, reproducible dependency setup, CMake invocation, UF2
+delivery, USB state, and diagnostics. Import `PicoKit` in the generated
+application for GPIO, serial, buses, timing, and other embedded behavior.
+
 The CLI itself has no PicoKit package dependency; it only writes the selected
 PicoKit release into generated projects. This keeps installation and release
 builds small while firmware still uses the complete library and SDK checkout.
@@ -183,3 +188,8 @@ both RP2040 and RP2350 against the explicit local PicoKit checkout.
 The complete documentation is in [`Docs/README.md`](Docs/README.md). It includes
 a beginner's guide, generated-project anatomy, template examples, the command
 and configuration reference, external-library integration, and troubleshooting.
+
+For each documented behavior, distinguish the host result from the board result:
+`build` proves an image was produced, `flash` proves the selected USB delivery
+path completed, `monitor` proves a serial stream is available, and a device-
+specific test is still required to prove wiring or peripheral semantics.

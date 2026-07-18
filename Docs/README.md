@@ -44,3 +44,19 @@ firmware compiled for RP2040 or RP2350. **USB CDC** is the serial device exposed
 by the running firmware. **BOOTSEL** is the removable USB storage mode used by
 the bootloader. **UF2** is the firmware image copied to BOOTSEL or loaded by
 `picotool`.
+
+## Documentation contract
+
+SwiftPico documents host orchestration; PicoKit documents the embedded API.
+When a workflow crosses both repositories, use the SwiftPico guide for project,
+build, flash, monitor, and dependency state, then use the PicoKit guide for
+pin behavior, bus semantics, timing, and runtime limits. A successful SwiftPico
+command proves a host stage only; it does not prove external wiring or device
+protocol correctness.
+
+The implementation-backed checks are:
+
+```sh
+sh Tests/docs-validation.sh
+sh Tests/cli-integration.sh
+```

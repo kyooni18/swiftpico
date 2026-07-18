@@ -126,6 +126,23 @@ while true {
 }
 ```
 
+## Template decision matrix
+
+| Template | First proof | Hardware assumption |
+| --- | --- | --- |
+| `blink` | board startup and LED path | board-specific onboard LED |
+| `serial` | raw USB byte round trip | USB CDC enabled |
+| `adc` | repeated analog sample | GPIO26/ADC wiring or temperature channel |
+| `pwm` | configured duty output | GPIO0 and a suitable load |
+| `i2c` | timeout-safe bus transaction | I2C0, SDA4, SCL5, device at `0x50` |
+| `spi` | SPI0 write | SCK18, MOSI19, optional receiver |
+| `interrupt` | foreground event polling | falling edge on GPIO17 |
+| `watchdog` | serviced watchdog loop | reset behavior observed intentionally |
+
+Templates are bring-up starting points, not portable application drivers. Keep
+their loop structure only when its timing, failure policy, and ownership model
+match the product.
+
 ## Watchdog
 
 The watchdog template enables a five-second timeout and services it once per

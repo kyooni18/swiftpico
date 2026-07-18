@@ -73,3 +73,21 @@ Context discovery still accepts `picokit.json`, and
 `swiftpico dependencies migrate` preserves a legacy `Firmware/Dependencies.cmake`
 while creating the v0.2 dependency and interop structure. New projects should
 use `swiftpico.json`, `dependencies.json`, and the generated CMake file.
+
+## Ownership map
+
+| File or directory | Owned by | Safe change |
+| --- | --- | --- |
+| `Sources/<product>/main.swift` | application | edit freely |
+| `Package.swift` | application/SwiftPM | use `add swift` or edit intentionally |
+| `swiftpico.json` | application | configure board and host paths |
+| `Firmware/dependencies.json` | application | edit intent |
+| `Firmware/dependencies.lock` | resolver | regenerate through `resolve` |
+| `Firmware/Generated/Dependencies.cmake` | generator | regenerate, do not hand-edit |
+| `Firmware/Interop` | application | add adapters and module maps |
+| `Firmware/CMakeLists.txt` | generated entrypoint | change only for a deliberate custom boundary |
+| `Firmware/build`, `.build`, `.swiftpico` | tools | clean/regenerate as needed |
+
+This map is the practical answer to “where should I fix it?”: source behavior
+belongs in the application, dependency intent in the manifest, and derived
+build behavior in the resolver output.
